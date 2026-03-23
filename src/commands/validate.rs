@@ -54,6 +54,7 @@ pub async fn run(
             check_package_exclusions(file_path, &content, &mut findings);
             check_sensor_platforms(file_path, &content, &mut findings);
             check_automation_syntax(file_path, &content, &mut findings);
+            detect_circular_references(file_path, &content, &mut findings);
         }
     }
 
@@ -591,6 +592,108 @@ fn check_automation_syntax(file: &str, content: &str, findings: &mut Vec<Finding
     }
 }
 
+fn detect_circular_references(file: &str, content: &str, findings: &mut Vec<Finding>) {
+    let yaml: serde_yaml::Value = match serde_yaml::from_str(content) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let template = match yaml.get("template") {
+        Some(serde_yaml::Value::Sequence(items)) => items,
+        _ => return,
+    };
+
+    for item in template {
+        let map = match item.as_mapping() {
+            Some(m) => m,
+            None => continue,
+        };
+
+        for sensor_type in &["sensor", "binary_sensor"] {
+            let sensors = match map.get(&serde_yaml::Value::String(sensor_type.to_string())) {
+                Some(serde_yaml::Value::Sequence(s)) => s,
+                _ => continue,
+            };
+
+            for sensor in sensors {
+                let sensor_map = match sensor.as_mapping() {
+                    Some(m) => m,
+                    None => continue,
+                };
+
+                let name = sensor_map
+                    .get(&serde_yaml::Value::String("name".into()))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unnamed");
+
+                let unique_id = sensor_map
+                    .get(&serde_yaml::Value::String("unique_id".into()))
+                    .and_then(|v| v.as_str());
+
+                let entity_id = if let Some(uid) = unique_id {
+                    format!("{sensor_type}.{uid}")
+                } else {
+                    format!(
+                        "{sensor_type}.{}",
+                        name.to_lowercase().replace(' ', "_")
+                    )
+                };
+
+                // Check state, icon, availability fields
+                for field in &["state", "icon", "availability"] {
+                    if let Some(val) = sensor_map
+                        .get(&serde_yaml::Value::String(field.to_string()))
+                        .and_then(|v| v.as_str())
+                    {
+                        if contains_self_reference(val, &entity_id) {
+                            findings.push(Finding {
+                                file: file.to_string(),
+                                line: None,
+                                severity: "error",
+                                check: "circular_reference",
+                                message: format!(
+                                    "Template sensor '{name}' ({entity_id}): {field} references itself"
+                                ),
+                            });
+                        }
+                    }
+                }
+
+                // Check attributes
+                if let Some(attrs) = sensor_map
+                    .get(&serde_yaml::Value::String("attributes".into()))
+                    .and_then(|v| v.as_mapping())
+                {
+                    for (attr_key, attr_val) in attrs {
+                        let attr_name = attr_key.as_str().unwrap_or("?");
+                        if let Some(val) = attr_val.as_str() {
+                            if contains_self_reference(val, &entity_id) {
+                                findings.push(Finding {
+                                    file: file.to_string(),
+                                    line: None,
+                                    severity: "error",
+                                    check: "circular_reference",
+                                    message: format!(
+                                        "Template sensor '{name}' ({entity_id}): attribute '{attr_name}' references itself"
+                                    ),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn contains_self_reference(template: &str, entity_id: &str) -> bool {
+    let escaped = regex::escape(entity_id);
+    let re = Regex::new(&format!(
+        r#"(states|state_attr|is_state)\(\s*['"]{}['")\s,]"#, escaped
+    )).expect("valid regex");
+    re.is_match(template)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -804,6 +907,73 @@ mod tests {
         let mut findings = Vec::new();
         let content = "automation: !include automations.yaml\n";
         check_automation_syntax("test.yaml", content, &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn circular_ref_self_reference_detected() {
+        let mut findings = Vec::new();
+        let content = "template:\n  - sensor:\n      - name: Test Sensor\n        unique_id: test_sensor\n        state: \"{{ states('sensor.test_sensor') }}\"\n";
+        detect_circular_references("test.yaml", content, &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].check, "circular_reference");
+        assert!(findings[0].message.contains("test_sensor"));
+    }
+
+    #[test]
+    fn circular_ref_no_self_reference_clean() {
+        let mut findings = Vec::new();
+        let content = "template:\n  - sensor:\n      - name: Average Temp\n        unique_id: avg_temp\n        state: \"{{ states('sensor.outdoor_temp') }}\"\n";
+        detect_circular_references("test.yaml", content, &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn circular_ref_state_attr_self_reference() {
+        let mut findings = Vec::new();
+        let content = "template:\n  - sensor:\n      - name: Power Monitor\n        unique_id: power_monitor\n        state: \"{{ state_attr('sensor.power_monitor', 'watts') }}\"\n";
+        detect_circular_references("test.yaml", content, &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn circular_ref_is_state_self_reference() {
+        let mut findings = Vec::new();
+        let content = "template:\n  - binary_sensor:\n      - name: Door Open\n        unique_id: door_open\n        state: \"{{ is_state('binary_sensor.door_open', 'on') }}\"\n";
+        detect_circular_references("test.yaml", content, &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn circular_ref_name_derived_entity_id() {
+        let mut findings = Vec::new();
+        let content = "template:\n  - sensor:\n      - name: My Sensor\n        state: \"{{ states('sensor.my_sensor') }}\"\n";
+        detect_circular_references("test.yaml", content, &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn circular_ref_attribute_self_reference() {
+        let mut findings = Vec::new();
+        let content = "template:\n  - sensor:\n      - name: Power\n        unique_id: power_calc\n        state: \"{{ 100 }}\"\n        attributes:\n          trend: \"{{ states('sensor.power_calc') }}\"\n";
+        detect_circular_references("test.yaml", content, &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].message.contains("attribute"));
+    }
+
+    #[test]
+    fn circular_ref_no_false_positive_on_similar_name() {
+        let mut findings = Vec::new();
+        let content = "template:\n  - sensor:\n      - name: Test Sensor\n        unique_id: test_sensor\n        state: \"{{ states('sensor.test_sensor_2') }}\"\n";
+        detect_circular_references("test.yaml", content, &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn circular_ref_no_template_section_clean() {
+        let mut findings = Vec::new();
+        let content = "sensor:\n  - platform: template\n    sensors:\n      test:\n        value_template: '{{ 1 }}'\n";
+        detect_circular_references("test.yaml", content, &mut findings);
         assert!(findings.is_empty());
     }
 }
