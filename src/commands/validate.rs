@@ -53,6 +53,7 @@ pub async fn run(
             check_file_cruft(file_path, &mut findings);
             check_package_exclusions(file_path, &content, &mut findings);
             check_sensor_platforms(file_path, &content, &mut findings);
+            check_automation_syntax(file_path, &content, &mut findings);
         }
     }
 
@@ -529,6 +530,67 @@ fn check_package_exclusions(file: &str, content: &str, findings: &mut Vec<Findin
     }
 }
 
+fn check_automation_syntax(file: &str, content: &str, findings: &mut Vec<Finding>) {
+    let yaml: serde_yaml::Value = match serde_yaml::from_str(content) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let automations = match yaml.get("automation") {
+        Some(serde_yaml::Value::Sequence(items)) => items,
+        _ => return,
+    };
+
+    for (i, item) in automations.iter().enumerate() {
+        let map = match item {
+            serde_yaml::Value::Mapping(m) => m,
+            _ => continue,
+        };
+
+        let has = |key: &str| map.contains_key(&serde_yaml::Value::String(key.to_string()));
+
+        let alias = map
+            .get(&serde_yaml::Value::String("alias".to_string()))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("#{}", i + 1));
+
+        let has_trigger = has("trigger") || has("triggers");
+        let has_action = has("action") || has("actions");
+        let has_alias = has("alias");
+
+        if !has_trigger {
+            findings.push(Finding {
+                file: file.to_string(),
+                line: None,
+                severity: "error",
+                check: "automation_syntax",
+                message: format!("Automation '{alias}' missing trigger/triggers"),
+            });
+        }
+
+        if !has_action {
+            findings.push(Finding {
+                file: file.to_string(),
+                line: None,
+                severity: "error",
+                check: "automation_syntax",
+                message: format!("Automation '{alias}' missing action/actions"),
+            });
+        }
+
+        if !has_alias {
+            findings.push(Finding {
+                file: file.to_string(),
+                line: None,
+                severity: "warning",
+                check: "automation_syntax",
+                message: format!("Automation #{} has no alias — add one for readability", i + 1),
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -689,6 +751,59 @@ mod tests {
         let mut findings = Vec::new();
         let content = "sensor: true\n";
         check_sensor_platforms("test.yaml", content, &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn automation_syntax_valid_modern() {
+        let mut findings = Vec::new();
+        let content = "automation:\n  - alias: Test\n    triggers:\n      - trigger: state\n    actions:\n      - action: light.turn_on\n";
+        check_automation_syntax("test.yaml", content, &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn automation_syntax_valid_legacy() {
+        let mut findings = Vec::new();
+        let content = "automation:\n  - alias: Test\n    trigger:\n      - platform: state\n    action:\n      - service: light.turn_on\n";
+        check_automation_syntax("test.yaml", content, &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn automation_syntax_missing_trigger_errors() {
+        let mut findings = Vec::new();
+        let content = "automation:\n  - alias: Broken\n    action:\n      - service: light.turn_on\n";
+        check_automation_syntax("test.yaml", content, &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, "error");
+        assert!(findings[0].message.contains("trigger"));
+    }
+
+    #[test]
+    fn automation_syntax_missing_action_errors() {
+        let mut findings = Vec::new();
+        let content = "automation:\n  - alias: Broken\n    trigger:\n      - platform: state\n";
+        check_automation_syntax("test.yaml", content, &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].message.contains("action"));
+    }
+
+    #[test]
+    fn automation_syntax_missing_alias_warns() {
+        let mut findings = Vec::new();
+        let content = "automation:\n  - trigger:\n      - platform: state\n    action:\n      - service: light.turn_on\n";
+        check_automation_syntax("test.yaml", content, &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, "warning");
+        assert!(findings[0].message.contains("alias"));
+    }
+
+    #[test]
+    fn automation_not_a_list_no_panic() {
+        let mut findings = Vec::new();
+        let content = "automation: !include automations.yaml\n";
+        check_automation_syntax("test.yaml", content, &mut findings);
         assert!(findings.is_empty());
     }
 }
