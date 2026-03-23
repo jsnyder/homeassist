@@ -66,6 +66,11 @@ impl HaClient {
         resp.json().await.map_err(Into::into)
     }
 
+    async fn get_text(&self, endpoint: &str) -> Result<reqwest::Response, AppError> {
+        let url = format!("{}/api{}", self.base_url, endpoint);
+        self.client.get(&url).send().await.map_err(Into::into)
+    }
+
     async fn post_text(&self, endpoint: &str, body: &Value) -> Result<String, AppError> {
         let url = format!("{}/api{}", self.base_url, endpoint);
         let resp = self.client.post(&url).json(body).send().await?;
@@ -115,10 +120,19 @@ impl HaClient {
     }
 
     pub async fn get_error_log(&self) -> Result<String, AppError> {
-        let url = format!("{}/api/error_log", self.base_url);
-        let resp = self.client.get(&url).send().await?;
-        let resp = self.check_response(resp).await?;
-        resp.text().await.map_err(Into::into)
+        let resp = self.get_text("/error_log").await?;
+        if resp.status().is_success() {
+            return resp.text().await.map_err(Into::into);
+        }
+
+        // /api/error_log may be unavailable (removed in some HA versions or admin-only)
+        Err(AppError::Http {
+            status: resp.status().as_u16(),
+            message: "Error log endpoint unavailable. This endpoint may require admin privileges \
+                      or may not be available in your HA version. \
+                      Use HA UI: Settings > System > Logs instead."
+                .to_string(),
+        })
     }
 
     pub async fn get_history(
@@ -180,6 +194,11 @@ impl HaClient {
         }
         map
     }
+}
+
+/// Public wrapper for chrono_offset, used by diff command.
+pub fn chrono_offset_public(hours: u32) -> Result<String, AppError> {
+    chrono_offset(hours)
 }
 
 fn encode_path_segment(s: &str) -> String {

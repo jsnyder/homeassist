@@ -1,5 +1,8 @@
 pub mod automations;
+pub mod batch;
+pub mod completions;
 pub mod config;
+pub mod diff;
 pub mod entities;
 pub mod events;
 pub mod health;

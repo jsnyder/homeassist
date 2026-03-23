@@ -13,7 +13,7 @@ use output::OutputMode;
 #[command(name = "homeassist")]
 #[command(about = "Home Assistant CLI for LLM agents - JSON output, minimal tokens")]
 #[command(version)]
-struct Cli {
+pub struct Cli {
     /// Home Assistant URL (env: HA_URL)
     #[arg(long)]
     url: Option<String>,
@@ -89,6 +89,26 @@ enum Commands {
     Scripts {
         #[command(subcommand)]
         action: ScriptAction,
+    },
+    /// Execute multiple commands from JSONL
+    Batch {
+        /// Path to JSONL file (reads stdin if omitted)
+        #[arg(long)]
+        file: Option<String>,
+    },
+    /// Show entities that changed state recently
+    Diff {
+        /// Hours to look back (default: 1)
+        #[arg(long, default_value = "1")]
+        since: u32,
+        /// Filter by domain
+        #[arg(long)]
+        domain: Option<String>,
+    },
+    /// Generate shell completions
+    Completions {
+        /// Shell type (bash, zsh, fish, powershell, elvish)
+        shell: String,
     },
     /// Get server health and connection status
     Health,
@@ -249,10 +269,18 @@ async fn main() {
 }
 
 async fn run(cli: Cli, mode: OutputMode) -> Result<(), AppError> {
-    // Usage doesn't need auth
-    if matches!(cli.command, Commands::Usage) {
-        print_usage();
-        return Ok(());
+    // Commands that don't need auth
+    match &cli.command {
+        Commands::Usage => {
+            print_usage();
+            return Ok(());
+        }
+        Commands::Completions { shell } => {
+            let completions = commands::completions::generate_completions(shell)?;
+            print!("{completions}");
+            return Ok(());
+        }
+        _ => {}
     }
 
     let auth_config = auth::resolve_auth(cli.url.as_deref(), cli.token.as_deref())?;
@@ -343,10 +371,16 @@ async fn run(cli: Cli, mode: OutputMode) -> Result<(), AppError> {
                 commands::automations::scripts_run(&client, &entity_id, mode).await?
             }
         },
+        Commands::Batch { file } => {
+            commands::batch::run(&client, &auth_config.url, file.as_deref(), mode).await?
+        }
+        Commands::Diff { since, domain } => {
+            commands::diff::since(&client, since, domain.as_deref(), mode).await?
+        }
         Commands::Health => {
             commands::health::check(&client, &auth_config.url, mode).await?
         }
-        Commands::Usage => unreachable!(),
+        Commands::Usage | Commands::Completions { .. } => unreachable!(),
     };
 
     if !output.is_empty() {
@@ -400,6 +434,18 @@ AUTOMATIONS:
 SCRIPTS:
   homeassist scripts list
   homeassist scripts run <entity_id>
+
+BATCH:
+  homeassist batch [--file commands.jsonl]
+  echo '{{\"command\":\"health\"}}' | homeassist batch
+
+DIFF:
+  homeassist diff --since 1 [--domain sensor]
+
+COMPLETIONS:
+  homeassist completions bash >> ~/.bashrc
+  homeassist completions zsh >> ~/.zshrc
+  homeassist completions fish > ~/.config/fish/completions/homeassist.fish
 
 HEALTH:
   homeassist health
