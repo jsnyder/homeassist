@@ -103,6 +103,117 @@ Prioritized by frequency of manual workarounds observed in past sessions.
 
 **Challenge**: Supervisor API is separate from core REST API, requires different auth.
 
+## Phase 5: Safe Deployment System
+
+A general-purpose deployment pipeline for any Home Assistant installation, built into the
+CLI. Designed to replace ad-hoc rsync/scp scripts with a single, opinionated workflow
+that has failsafes at every step.
+
+Inspired by the battle-tested `deploy-unified.sh` (~1,800 lines) from the home_assistant
+project, but generalized for any user managing HA config in git.
+
+### Design Principles
+
+- **Stop-the-line**: Any validation failure halts deployment. No partial deploys.
+- **Reversible by default**: Backup before every deploy, automatic rollback on failure.
+- **Verify what you deploy**: Post-deploy checks confirm the system is healthy.
+- **Transport-agnostic**: SSH, Docker, or local — same workflow, different transport.
+- **Progressive disclosure**: Simple `homeassist deploy` works with defaults; power users
+  can configure everything.
+
+### Tier 1: Validate & Verify (no SSH needed)
+
+Local YAML validation + API-based verification. High value, zero transport complexity.
+
+**`homeassist validate [path]`** — Pre-deploy validation suite:
+- YAML syntax check (valid YAML, proper indentation)
+- Automation structure (triggers/conditions/actions present and well-formed)
+- Template format (balanced Jinja delimiters, no common errors)
+- Duplicate entity ID detection across files
+- Sensor platform validation (required fields present)
+- Entity reference check against live HA (do referenced entities exist?)
+- Common error patterns (hardcoded IPs, missing required fields, deprecated syntax)
+- Circular reference detection in template sensors
+
+**`homeassist verify [--baseline <file>]`** — Post-deploy health check:
+- Connection health
+- Unavailable entity count delta (before vs after deploy)
+- Critical entity existence check (from config)
+- Automation state check (none went "unavailable")
+- Snapshot baseline for future comparisons
+
+**Dependencies**: `serde_yaml` for YAML parsing. ~550 lines.
+
+### Tier 2: Deploy Orchestration
+
+The full pipeline: validate → backup → sync → check → reload → verify → rollback.
+
+**`homeassist deploy [--dry-run] [--method ssh|docker|local]`**
+
+Pipeline steps:
+1. `homeassist validate .` — local validation (abort on failure)
+2. Create timestamped backup on target
+3. Sync config files to target (rsync for SSH, cp for local, docker cp for Docker)
+4. `homeassist config check` — HA validates its own config (abort + rollback on failure)
+5. `homeassist config reload all` or restart (based on what changed)
+6. Wait for HA startup (poll health endpoint)
+7. `homeassist verify` — post-deploy checks (rollback on failure)
+8. Update issue baseline on success
+
+**Transport methods** (each ~50-100 lines):
+- `ssh` — rsync over SSH (most common for HA OS)
+- `docker` — docker cp + docker exec
+- `local` — direct filesystem copy (for supervised/core installs)
+
+**`homeassist deploy rollback`** — Restore from most recent backup.
+
+### Configuration: `.homeassist.toml`
+
+Per-project config file in the user's HA config repo:
+
+```toml
+[deploy]
+method = "ssh"                    # ssh | docker | local
+host = "homeassistant.local"
+user = "root"
+ssh_key = "~/.ssh/id_rsa"        # optional, uses ssh-agent by default
+config_path = "/config"           # remote config directory
+packages_dir = "packages"         # local packages directory
+exclude = ["*.disabled", "archive/*", ".git/*"]
+
+[verify]
+critical_entities = [             # entities that MUST exist after deploy
+    "climate.thermostat",
+    "binary_sensor.front_door",
+]
+max_unavailable_delta = 5         # fail if unavailable count increases by more
+startup_timeout = 120             # seconds to wait for HA to come back up
+
+[validate]
+check_entity_refs = true          # verify entity references against live HA
+check_circular_refs = true        # detect template circular references
+```
+
+### Implementation Estimate
+
+| Component | Lines | New dependencies |
+|-----------|-------|-----------------|
+| YAML validation suite | ~400 | `serde_yaml` |
+| Verify command | ~150 | none |
+| Deploy orchestration | ~200 | none |
+| SSH transport | ~100 | shells out to ssh/rsync |
+| Docker transport | ~60 | shells out to docker |
+| Local transport | ~40 | `std::fs` |
+| Config file parsing | ~80 | `toml` crate |
+| **Total** | **~1,030** | 2 crates |
+
+### Rollout Plan
+
+1. **Phase 5a**: `validate` + `verify` commands (no transport, no config file)
+2. **Phase 5b**: `.homeassist.toml` config + `deploy` with SSH transport
+3. **Phase 5c**: Docker and local transports
+4. **Phase 5d**: Issue tracking (baseline comparisons over time)
+
 ## Architecture Decision: Websocket Support
 
 Features 1-4 all require websocket access. Adding websocket support would unlock a significant chunk of HA's API that is currently inaccessible via REST. The recommended approach:
