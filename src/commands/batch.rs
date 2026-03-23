@@ -93,7 +93,8 @@ async fn execute_command(
             let domain = args.get("domain").and_then(|v| v.as_str());
             let pattern = args.get("pattern").and_then(|v| v.as_str());
             let name = args.get("name").and_then(|v| v.as_str());
-            crate::commands::entities::list(client, domain, pattern, name, mode).await
+            let state = args.get("state").and_then(|v| v.as_str());
+            crate::commands::entities::list(client, domain, pattern, name, state, mode).await
         }
         "entities.search" => {
             let pattern = args

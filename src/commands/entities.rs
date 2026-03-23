@@ -10,6 +10,7 @@ pub async fn list(
     domain: Option<&str>,
     pattern: Option<&str>,
     name: Option<&str>,
+    state: Option<&str>,
     mode: OutputMode,
 ) -> Result<String, AppError> {
     let human = mode == OutputMode::Human;
@@ -23,6 +24,10 @@ pub async fn list(
                 .and_then(|id| id.as_str())
                 .is_some_and(|id| id.starts_with(&prefix))
         });
+    }
+
+    if let Some(s) = state {
+        filter_by_state(&mut states, s);
     }
 
     if let Some(p) = pattern {
@@ -115,6 +120,14 @@ pub async fn search(
     }
 }
 
+fn filter_by_state(entities: &mut Vec<Value>, state: &str) {
+    entities.retain(|e| {
+        e.get("state")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| s == state)
+    });
+}
+
 fn matches_entity(re: &regex::Regex, entity: &Value) -> bool {
     let id = entity
         .get("entity_id")
@@ -125,4 +138,42 @@ fn matches_entity(re: &regex::Regex, entity: &Value) -> bool {
         .and_then(|v| v.as_str())
         .unwrap_or("");
     re.is_match(id) || re.is_match(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_entities() -> Vec<Value> {
+        vec![
+            json!({"entity_id": "light.kitchen", "state": "on", "attributes": {"friendly_name": "Kitchen Light"}}),
+            json!({"entity_id": "light.bedroom", "state": "off", "attributes": {"friendly_name": "Bedroom Light"}}),
+            json!({"entity_id": "sensor.temp", "state": "72.5", "attributes": {"friendly_name": "Temperature"}}),
+            json!({"entity_id": "binary_sensor.door", "state": "unavailable", "attributes": {"friendly_name": "Front Door"}}),
+            json!({"entity_id": "switch.fan", "state": "on", "attributes": {"friendly_name": "Fan"}}),
+        ]
+    }
+
+    #[test]
+    fn filter_by_state_exact_match() {
+        let mut entities = test_entities();
+        filter_by_state(&mut entities, "on");
+        assert_eq!(entities.len(), 2);
+        assert!(entities.iter().all(|e| e["state"] == "on"));
+    }
+
+    #[test]
+    fn filter_by_state_unavailable_does_not_match_available() {
+        let mut entities = test_entities();
+        filter_by_state(&mut entities, "unavailable");
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0]["entity_id"], "binary_sensor.door");
+    }
+
+    #[test]
+    fn filter_by_state_no_matches_returns_empty() {
+        let mut entities = test_entities();
+        filter_by_state(&mut entities, "unknown");
+        assert!(entities.is_empty());
+    }
 }

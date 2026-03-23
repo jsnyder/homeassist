@@ -163,6 +163,9 @@ enum EntityAction {
         /// Filter by regex on entity_id/friendly_name
         #[arg(long)]
         name: Option<String>,
+        /// Filter by exact state value (e.g., on, off, unavailable)
+        #[arg(long)]
+        state: Option<String>,
     },
     /// Get single entity state
     Get {
@@ -344,12 +347,14 @@ async fn run(cli: Cli, mode: OutputMode) -> Result<(), AppError> {
                 domain,
                 pattern,
                 name,
+                state,
             } => {
                 commands::entities::list(
                     &client,
                     domain.as_deref(),
                     pattern.as_deref(),
                     name.as_deref(),
+                    state.as_deref(),
                     mode,
                 )
                 .await?
