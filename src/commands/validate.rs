@@ -52,6 +52,7 @@ pub async fn run(
             check_common_errors(file_path, &content, &mut findings);
             check_file_cruft(file_path, &mut findings);
             check_package_exclusions(file_path, &content, &mut findings);
+            check_sensor_platforms(file_path, &content, &mut findings);
         }
     }
 
@@ -469,6 +470,35 @@ async fn check_entity_references(
     }
 }
 
+fn check_sensor_platforms(file: &str, content: &str, findings: &mut Vec<Finding>) {
+    let yaml: serde_yaml::Value = match serde_yaml::from_str(content) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    for domain in &["sensor", "binary_sensor"] {
+        if let Some(serde_yaml::Value::Sequence(items)) = yaml.get(domain) {
+            for (i, item) in items.iter().enumerate() {
+                if let serde_yaml::Value::Mapping(map) = item {
+                    let has_platform = map.contains_key(&serde_yaml::Value::String("platform".to_string()));
+                    if !has_platform {
+                        findings.push(Finding {
+                            file: file.to_string(),
+                            line: None,
+                            severity: "warning",
+                            check: "missing_platform",
+                            message: format!(
+                                "{domain} list entry #{} has no 'platform:' key — is this a legacy integration?",
+                                i + 1
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn check_package_exclusions(file: &str, content: &str, findings: &mut Vec<Finding>) {
     if !file.contains("/packages/") && !file.starts_with("packages/") {
         return;
@@ -627,5 +657,38 @@ mod tests {
         let content = "recorder:\n  purge_keep_days: 5\nlogger:\n  default: warning\n";
         check_package_exclusions("packages/monitoring.yaml", content, &mut findings);
         assert_eq!(findings.len(), 2);
+    }
+
+    #[test]
+    fn sensor_platform_missing_detected() {
+        let mut findings = Vec::new();
+        let content = "sensor:\n  - name: My Sensor\n    state: '{{ 1 }}'\n";
+        check_sensor_platforms("test.yaml", content, &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].check, "missing_platform");
+    }
+
+    #[test]
+    fn sensor_platform_present_no_finding() {
+        let mut findings = Vec::new();
+        let content = "sensor:\n  - platform: template\n    sensors:\n      test:\n        value_template: '{{ 1 }}'\n";
+        check_sensor_platforms("test.yaml", content, &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn binary_sensor_platform_missing_detected() {
+        let mut findings = Vec::new();
+        let content = "binary_sensor:\n  - name: Door\n    state: 'on'\n";
+        check_sensor_platforms("test.yaml", content, &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn sensor_not_a_list_no_panic() {
+        let mut findings = Vec::new();
+        let content = "sensor: true\n";
+        check_sensor_platforms("test.yaml", content, &mut findings);
+        assert!(findings.is_empty());
     }
 }
