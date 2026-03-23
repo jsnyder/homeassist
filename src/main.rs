@@ -105,6 +105,22 @@ enum Commands {
         #[arg(long)]
         domain: Option<String>,
     },
+    /// Watch an entity for state changes
+    Watch {
+        /// Entity ID to watch
+        entity_id: String,
+        /// Timeout in seconds (default: 300)
+        #[arg(long, default_value = "300")]
+        timeout: u32,
+        /// Poll interval in seconds (default: 2)
+        #[arg(long, default_value = "2")]
+        interval: u32,
+        /// Wait for specific state value
+        #[arg(long)]
+        state: Option<String>,
+    },
+    /// Audit system health: unavailable/unknown entities, domain summary
+    Inspect,
     /// Generate shell completions
     Completions {
         /// Shell type (bash, zsh, fish, powershell, elvish)
@@ -377,6 +393,16 @@ async fn run(cli: Cli, mode: OutputMode) -> Result<(), AppError> {
         Commands::Diff { since, domain } => {
             commands::diff::since(&client, since, domain.as_deref(), mode).await?
         }
+        Commands::Watch {
+            entity_id,
+            timeout,
+            interval,
+            state,
+        } => {
+            commands::watch::entity(&client, &entity_id, timeout, interval, state.as_deref(), mode)
+                .await?
+        }
+        Commands::Inspect => commands::inspect::triage(&client, mode).await?,
         Commands::Health => {
             commands::health::check(&client, &auth_config.url, mode).await?
         }
@@ -441,6 +467,12 @@ BATCH:
 
 DIFF:
   homeassist diff --since 1 [--domain sensor]
+
+WATCH:
+  homeassist watch <entity_id> [--timeout 300] [--interval 2] [--state on]
+
+INSPECT:
+  homeassist inspect
 
 COMPLETIONS:
   homeassist completions bash >> ~/.bashrc
