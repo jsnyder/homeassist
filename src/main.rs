@@ -121,6 +121,21 @@ enum Commands {
     },
     /// Audit system health: unavailable/unknown entities, domain summary
     Inspect,
+    /// Validate HA YAML config files (syntax, duplicates, common errors)
+    Validate {
+        /// Path to config directory or file (default: current directory)
+        #[arg(default_value = ".")]
+        path: String,
+        /// Check entity references against live HA
+        #[arg(long)]
+        check_entities: bool,
+    },
+    /// Post-deploy verification: health, entity counts, config validity
+    Verify {
+        /// Baseline snapshot file for delta comparison
+        #[arg(long)]
+        baseline: Option<String>,
+    },
     /// Generate shell completions
     Completions {
         /// Shell type (bash, zsh, fish, powershell, elvish)
@@ -296,6 +311,24 @@ async fn run(cli: Cli, mode: OutputMode) -> Result<(), AppError> {
             print!("{completions}");
             return Ok(());
         }
+        Commands::Validate {
+            path,
+            check_entities,
+        } => {
+            // Validate can run without auth (local files only)
+            let client = if *check_entities {
+                let auth = auth::resolve_auth(cli.url.as_deref(), cli.token.as_deref())?;
+                Some(client::HaClient::new(&auth)?)
+            } else {
+                None
+            };
+            let output =
+                commands::validate::run(client.as_ref(), path, *check_entities, mode).await?;
+            if !output.is_empty() {
+                println!("{output}");
+            }
+            return Ok(());
+        }
         _ => {}
     }
 
@@ -403,10 +436,15 @@ async fn run(cli: Cli, mode: OutputMode) -> Result<(), AppError> {
                 .await?
         }
         Commands::Inspect => commands::inspect::triage(&client, mode).await?,
+        Commands::Verify { baseline } => {
+            commands::verify::check(&client, &auth_config.url, baseline.as_deref(), mode).await?
+        }
         Commands::Health => {
             commands::health::check(&client, &auth_config.url, mode).await?
         }
-        Commands::Usage | Commands::Completions { .. } => unreachable!(),
+        Commands::Usage | Commands::Completions { .. } | Commands::Validate { .. } => {
+            unreachable!()
+        }
     };
 
     if !output.is_empty() {
@@ -473,6 +511,14 @@ WATCH:
 
 INSPECT:
   homeassist inspect
+
+VALIDATE:
+  homeassist validate ./packages
+  homeassist validate . --check-entities
+
+VERIFY:
+  homeassist verify
+  homeassist verify --baseline snapshot.json
 
 COMPLETIONS:
   homeassist completions bash >> ~/.bashrc
