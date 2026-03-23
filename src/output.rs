@@ -1,3 +1,4 @@
+use crate::error::AppError;
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -33,23 +34,23 @@ impl OutputMode {
     }
 }
 
-pub fn format_output(data: &Value, mode: OutputMode) -> String {
+pub fn format_output(data: &Value, mode: OutputMode) -> Result<String, AppError> {
     match mode {
-        OutputMode::Json => serde_json::to_string_pretty(data).unwrap_or_default(),
+        OutputMode::Json => Ok(serde_json::to_string_pretty(data)?),
         OutputMode::Compact => {
             if let Some(s) = data.as_str() {
-                s.to_string()
+                Ok(s.to_string())
             } else {
-                serde_json::to_string(data).unwrap_or_default()
+                Ok(serde_json::to_string(data)?)
             }
         }
-        OutputMode::Human => format_human(data),
+        OutputMode::Human => Ok(format_human(data)),
     }
 }
 
-pub fn format_entity_list(entities: &[Value], mode: OutputMode) -> String {
+pub fn format_entity_list(entities: &[Value], mode: OutputMode) -> Result<String, AppError> {
     match mode {
-        OutputMode::Compact => entities
+        OutputMode::Compact => Ok(entities
             .iter()
             .filter_map(|e| {
                 let id = e.get("entity_id")?.as_str()?;
@@ -57,8 +58,8 @@ pub fn format_entity_list(entities: &[Value], mode: OutputMode) -> String {
                 Some(format!("{id}\t{state}"))
             })
             .collect::<Vec<_>>()
-            .join("\n"),
-        _ => format_output(&Value::Array(entities.to_vec()), mode),
+            .join("\n")),
+        _ => Ok(serde_json::to_string_pretty(entities)?),
     }
 }
 
@@ -89,7 +90,7 @@ mod tests {
     #[test]
     fn json_mode_pretty_prints() {
         let data = json!({"key": "value"});
-        let output = format_output(&data, OutputMode::Json);
+        let output = format_output(&data, OutputMode::Json).unwrap();
         assert!(output.contains('\n'));
         assert!(output.contains("key"));
     }
@@ -97,7 +98,7 @@ mod tests {
     #[test]
     fn compact_mode_single_line() {
         let data = json!({"key": "value"});
-        let output = format_output(&data, OutputMode::Compact);
+        let output = format_output(&data, OutputMode::Compact).unwrap();
         assert!(!output.contains('\n'));
         assert!(output.contains("key"));
     }
@@ -105,14 +106,14 @@ mod tests {
     #[test]
     fn compact_mode_strings_unwrapped() {
         let data = json!("hello world");
-        let output = format_output(&data, OutputMode::Compact);
+        let output = format_output(&data, OutputMode::Compact).unwrap();
         assert_eq!(output, "hello world");
     }
 
     #[test]
     fn human_mode_object() {
         let data = json!({"status": "connected", "version": "2024.3"});
-        let output = format_output(&data, OutputMode::Human);
+        let output = format_output(&data, OutputMode::Human).unwrap();
         assert!(output.contains("status: connected"));
         assert!(output.contains("version: 2024.3"));
     }
@@ -120,7 +121,7 @@ mod tests {
     #[test]
     fn human_mode_array() {
         let data = json!([{"name": "a"}, {"name": "b"}]);
-        let output = format_output(&data, OutputMode::Human);
+        let output = format_output(&data, OutputMode::Human).unwrap();
         assert!(output.contains("name: a"));
         assert!(output.contains("name: b"));
     }
@@ -131,14 +132,14 @@ mod tests {
             json!({"entity_id": "light.kitchen", "state": "on"}),
             json!({"entity_id": "sensor.temp", "state": "72.5"}),
         ];
-        let output = format_entity_list(&entities, OutputMode::Compact);
+        let output = format_entity_list(&entities, OutputMode::Compact).unwrap();
         assert_eq!(output, "light.kitchen\ton\nsensor.temp\t72.5");
     }
 
     #[test]
     fn entity_list_json_mode() {
         let entities = vec![json!({"entity_id": "light.kitchen", "state": "on"})];
-        let output = format_entity_list(&entities, OutputMode::Json);
+        let output = format_entity_list(&entities, OutputMode::Json).unwrap();
         assert!(output.contains("light.kitchen"));
         assert!(output.contains('\n')); // pretty printed
     }

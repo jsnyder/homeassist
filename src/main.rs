@@ -78,7 +78,7 @@ enum EntityAction {
         pattern: Option<String>,
         /// Filter by regex on entity_id/friendly_name
         #[arg(long)]
-        area: Option<String>,
+        name: Option<String>,
     },
     /// Get single entity state
     Get {
@@ -139,7 +139,10 @@ async fn main() {
 
     if let Err(e) = run(cli, mode).await {
         let output = e.to_error_output();
-        eprintln!("{}", serde_json::to_string_pretty(&output).unwrap());
+        match serde_json::to_string_pretty(&output) {
+            Ok(json) => eprintln!("{json}"),
+            Err(_) => eprintln!("{{\"error\":\"{}\",\"code\":\"{}\"}}", e, e.code()),
+        }
         std::process::exit(1);
     }
 }
@@ -159,13 +162,13 @@ async fn run(cli: Cli, mode: OutputMode) -> Result<(), AppError> {
             EntityAction::List {
                 domain,
                 pattern,
-                area,
+                name,
             } => {
                 commands::entities::list(
                     &client,
                     domain.as_deref(),
                     pattern.as_deref(),
-                    area.as_deref(),
+                    name.as_deref(),
                     mode,
                 )
                 .await?

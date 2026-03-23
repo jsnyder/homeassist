@@ -1,5 +1,6 @@
 use crate::auth::AuthConfig;
 use crate::error::AppError;
+use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -22,10 +23,6 @@ impl HaClient {
                         .parse()
                         .map_err(|e| AppError::Other(format!("Invalid token: {e}")))?,
                 );
-                headers.insert(
-                    reqwest::header::CONTENT_TYPE,
-                    "application/json".parse().unwrap(),
-                );
                 headers
             })
             .timeout(Duration::from_secs(30))
@@ -38,45 +35,41 @@ impl HaClient {
         })
     }
 
+    /// Check response status and return an appropriate error for non-success responses.
+    async fn check_response(&self, resp: reqwest::Response) -> Result<reqwest::Response, AppError> {
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(AppError::Http {
+                status: status.as_u16(),
+                message: if text.is_empty() {
+                    status.canonical_reason().unwrap_or("Request failed").to_string()
+                } else {
+                    text
+                },
+            });
+        }
+        Ok(resp)
+    }
+
     async fn get<T: DeserializeOwned>(&self, endpoint: &str) -> Result<T, AppError> {
         let url = format!("{}/api{}", self.base_url, endpoint);
         let resp = self.client.get(&url).send().await?;
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(AppError::Http {
-                status,
-                message: text,
-            });
-        }
+        let resp = self.check_response(resp).await?;
         resp.json().await.map_err(Into::into)
     }
 
     async fn post<T: DeserializeOwned>(&self, endpoint: &str, body: &Value) -> Result<T, AppError> {
         let url = format!("{}/api{}", self.base_url, endpoint);
         let resp = self.client.post(&url).json(body).send().await?;
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(AppError::Http {
-                status,
-                message: text,
-            });
-        }
+        let resp = self.check_response(resp).await?;
         resp.json().await.map_err(Into::into)
     }
 
     async fn post_text(&self, endpoint: &str, body: &Value) -> Result<String, AppError> {
         let url = format!("{}/api{}", self.base_url, endpoint);
         let resp = self.client.post(&url).json(body).send().await?;
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(AppError::Http {
-                status,
-                message: text,
-            });
-        }
+        let resp = self.check_response(resp).await?;
         resp.text().await.map_err(Into::into)
     }
 
@@ -91,7 +84,8 @@ impl HaClient {
     }
 
     pub async fn get_state(&self, entity_id: &str) -> Result<Value, AppError> {
-        self.get(&format!("/states/{entity_id}")).await
+        let encoded = encode_path_segment(entity_id);
+        self.get(&format!("/states/{encoded}")).await
     }
 
     pub async fn get_services(&self) -> Result<Vec<Value>, AppError> {
@@ -104,6 +98,8 @@ impl HaClient {
         service: &str,
         data: Value,
     ) -> Result<Value, AppError> {
+        let domain = encode_path_segment(domain);
+        let service = encode_path_segment(service);
         self.post(&format!("/services/{domain}/{service}"), &data)
             .await
     }
@@ -121,14 +117,7 @@ impl HaClient {
     pub async fn get_error_log(&self) -> Result<String, AppError> {
         let url = format!("{}/api/error_log", self.base_url);
         let resp = self.client.get(&url).send().await?;
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(AppError::Http {
-                status,
-                message: text,
-            });
-        }
+        let resp = self.check_response(resp).await?;
         resp.text().await.map_err(Into::into)
     }
 
@@ -137,11 +126,21 @@ impl HaClient {
         entity_id: &str,
         hours: u32,
     ) -> Result<Vec<Vec<Value>>, AppError> {
-        let start = chrono_offset(hours);
-        self.get(&format!(
-            "/history/period/{start}?filter_entity_id={entity_id}&minimal_response"
-        ))
-        .await
+        let start = chrono_offset(hours)?;
+        let encoded_id = encode_path_segment(entity_id);
+        let url = format!("{}/api/history/period/{start}", self.base_url);
+        let resp = self
+            .client
+            .get(&url)
+            .query(&[
+                ("filter_entity_id", entity_id),
+                ("minimal_response", ""),
+            ])
+            .send()
+            .await?;
+        let _ = encoded_id; // entity_id passed via query param, not path
+        let resp = self.check_response(resp).await?;
+        resp.json().await.map_err(Into::into)
     }
 
     /// Transform services array into domain -> services map
@@ -159,14 +158,16 @@ impl HaClient {
     }
 }
 
-fn chrono_offset(hours: u32) -> String {
-    // Simple ISO 8601 offset calculation
+fn encode_path_segment(s: &str) -> String {
+    utf8_percent_encode(s, NON_ALPHANUMERIC).to_string()
+}
+
+fn chrono_offset(hours: u32) -> Result<String, AppError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .map_err(|_| AppError::Other("System clock is before Unix epoch".into()))?
         .as_secs();
     let offset = now - (hours as u64 * 3600);
-    // Format as ISO 8601 (approximate — good enough for HA API)
     let secs_per_day = 86400u64;
     let days_since_epoch = offset / secs_per_day;
     let secs_today = offset % secs_per_day;
@@ -174,15 +175,13 @@ fn chrono_offset(hours: u32) -> String {
     let mins = (secs_today % 3600) / 60;
     let secs_rem = secs_today % 60;
 
-    // Approximate date from days since epoch (not accounting for leap seconds)
     let (year, month, day) = days_to_ymd(days_since_epoch);
-    format!(
+    Ok(format!(
         "{year:04}-{month:02}-{day:02}T{hours_today:02}:{mins:02}:{secs_rem:02}"
-    )
+    ))
 }
 
 fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
-    // Simplified date calculation from days since Unix epoch
     let mut year = 1970u64;
     loop {
         let days_in_year = if is_leap(year) { 366 } else { 365 };
@@ -210,7 +209,7 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
 }
 
 fn is_leap(year: u64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
 
 #[cfg(test)]
@@ -250,7 +249,7 @@ mod tests {
 
     #[test]
     fn chrono_offset_produces_valid_format() {
-        let result = chrono_offset(24);
+        let result = chrono_offset(24).unwrap();
         // Should look like YYYY-MM-DDTHH:MM:SS
         assert!(result.contains('T'));
         assert_eq!(result.len(), 19);
@@ -269,5 +268,16 @@ mod tests {
         assert_eq!(y, 2024);
         assert_eq!(m, 1);
         assert_eq!(d, 1);
+    }
+
+    #[test]
+    fn encode_path_segment_encodes_special_chars() {
+        assert_eq!(encode_path_segment("light.kitchen"), "light%2Ekitchen");
+        assert_eq!(encode_path_segment("sensor.temp"), "sensor%2Etemp");
+    }
+
+    #[test]
+    fn encode_path_segment_preserves_alphanumeric() {
+        assert_eq!(encode_path_segment("abc123"), "abc123");
     }
 }

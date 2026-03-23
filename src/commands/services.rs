@@ -46,15 +46,15 @@ pub async fn list(
         }
     } else if let Some(d) = domain {
         if let Some(svcs) = map.get(d) {
-            Ok(format_output(&json!({ d: svcs }), mode))
+            format_output(&json!({ d: svcs }), mode)
         } else {
-            Ok(format_output(&json!({}), mode))
+            format_output(&json!({}), mode)
         }
     } else {
         let mut domains: Vec<&String> = map.keys().collect();
         domains.sort();
         let domain_list: Vec<Value> = domains.iter().map(|d| Value::String(d.to_string())).collect();
-        Ok(format_output(&Value::Array(domain_list), mode))
+        format_output(&Value::Array(domain_list), mode)
     }
 }
 
@@ -84,5 +84,5 @@ pub async fn call(
     }
 
     let result = client.call_service(domain, service_name, data).await?;
-    Ok(format_output(&json!({ "success": true, "result": result }), mode))
+    format_output(&json!({ "success": true, "result": result }), mode)
 }

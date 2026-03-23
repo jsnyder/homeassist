@@ -9,5 +9,5 @@ pub async fn render(
     mode: OutputMode,
 ) -> Result<String, AppError> {
     let result = client.render_template(template).await?;
-    Ok(format_output(&json!({ "template": template, "result": result }), mode))
+    format_output(&json!({ "template": template, "result": result }), mode)
 }

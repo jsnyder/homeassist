@@ -12,15 +12,21 @@ pub struct AuthConfig {
 pub fn resolve_auth(url_flag: Option<&str>, token_flag: Option<&str>) -> Result<AuthConfig, AppError> {
     let url = url_flag
         .map(String::from)
-        .or_else(|| std::env::var("HA_URL").ok())
-        .or_else(|| read_token_file("~/.ha_url"))
-        .ok_or(AppError::MissingUrl)?;
+        .or_else(|| std::env::var("HA_URL").ok());
+    let url = match url {
+        Some(u) => u,
+        None => read_token_file("~/.ha_url", false)?
+            .ok_or(AppError::MissingUrl)?,
+    };
 
     let token = token_flag
         .map(String::from)
-        .or_else(|| std::env::var("HA_TOKEN").ok())
-        .or_else(|| read_token_file("~/.ha_token"))
-        .ok_or(AppError::MissingToken)?;
+        .or_else(|| std::env::var("HA_TOKEN").ok());
+    let token = match token {
+        Some(t) => t,
+        None => read_token_file("~/.ha_token", true)?
+            .ok_or(AppError::MissingToken)?,
+    };
 
     Ok(AuthConfig {
         url: url.trim_end_matches('/').to_string(),
@@ -28,38 +34,50 @@ pub fn resolve_auth(url_flag: Option<&str>, token_flag: Option<&str>) -> Result<
     })
 }
 
-fn read_token_file(path: &str) -> Option<String> {
+/// Read a credential file, returning Ok(None) if the file doesn't exist,
+/// Ok(Some(content)) on success, or Err for I/O errors and insecure permissions.
+fn read_token_file(path: &str, check_perms: bool) -> Result<Option<String>, AppError> {
     let expanded = expand_tilde(path);
-    let content = fs::read_to_string(&expanded).ok()?;
+    let content = match fs::read_to_string(&expanded) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(AppError::Other(format!(
+                "Failed to read {}: {e}",
+                expanded.display()
+            )));
+        }
+    };
     let trimmed = content.trim().to_string();
     if trimmed.is_empty() {
-        None
-    } else {
-        // Check file permissions on Unix
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Ok(metadata) = fs::metadata(&expanded) {
-                let mode = metadata.permissions().mode() & 0o777;
-                if mode & 0o077 != 0 {
-                    eprintln!(
-                        "Warning: {} has insecure permissions ({:o}). Run: chmod 600 {}",
-                        path,
-                        mode,
-                        expanded.display()
-                    );
-                }
+        return Ok(None);
+    }
+
+    #[cfg(unix)]
+    if check_perms {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = fs::metadata(&expanded) {
+            let mode = metadata.permissions().mode() & 0o777;
+            if mode & 0o077 != 0 {
+                return Err(AppError::InsecurePermissions {
+                    path: path.to_string(),
+                    mode,
+                });
             }
         }
-        Some(trimmed)
     }
+
+    #[cfg(not(unix))]
+    let _ = check_perms;
+
+    Ok(Some(trimmed))
 }
 
 fn expand_tilde(path: &str) -> PathBuf {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = dirs_home() {
-            return home.join(rest);
-        }
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Some(home) = dirs_home()
+    {
+        return home.join(rest);
     }
     PathBuf::from(path)
 }
@@ -145,5 +163,26 @@ mod tests {
     fn expand_tilde_works() {
         let expanded = expand_tilde("~/test");
         assert!(!expanded.to_string_lossy().starts_with('~'));
+    }
+
+    #[test]
+    fn read_missing_file_returns_none() {
+        let result = read_token_file("/nonexistent/path/.ha_token", false).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_insecure_file_errors() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".ha_token");
+        fs::write(&path, "secret-token").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let result = read_token_file(path.to_str().unwrap(), true);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("chmod 600"));
     }
 }

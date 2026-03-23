@@ -8,7 +8,7 @@ pub async fn list(
     client: &HaClient,
     domain: Option<&str>,
     pattern: Option<&str>,
-    area: Option<&str>,
+    name: Option<&str>,
     mode: OutputMode,
 ) -> Result<String, AppError> {
     let mut states = client.get_states().await?;
@@ -23,17 +23,17 @@ pub async fn list(
     }
 
     if let Some(p) = pattern {
-        let re = safe_regex(p)?;
+        let re = safe_regex(p, true)?;
         states.retain(|e| matches_entity(&re, e));
     }
 
-    if let Some(a) = area {
-        let re = safe_regex(a)?;
+    if let Some(n) = name {
+        let re = safe_regex(n, true)?;
         states.retain(|e| matches_entity(&re, e));
     }
 
     if mode == OutputMode::Compact {
-        Ok(format_entity_list(&states, mode))
+        format_entity_list(&states, mode)
     } else {
         let result: Vec<Value> = states
             .into_iter()
@@ -46,7 +46,7 @@ pub async fn list(
                 })
             })
             .collect();
-        Ok(format_output(&Value::Array(result), mode))
+        format_output(&Value::Array(result), mode)
     }
 }
 
@@ -65,9 +65,9 @@ pub async fn get(
             map.remove("last_reported");
             map.remove("last_updated");
         }
-        Ok(format_output(&obj, mode))
+        format_output(&obj, mode)
     } else {
-        Ok(format_output(&state, mode))
+        format_output(&state, mode)
     }
 }
 
@@ -77,7 +77,7 @@ pub async fn search(
     mode: OutputMode,
 ) -> Result<String, AppError> {
     let states = client.get_states().await?;
-    let re = safe_regex(pattern)?;
+    let re = safe_regex(pattern, true)?;
 
     let matches: Vec<Value> = states
         .into_iter()
@@ -85,7 +85,7 @@ pub async fn search(
         .collect();
 
     if mode == OutputMode::Compact {
-        Ok(format_entity_list(&matches, mode))
+        format_entity_list(&matches, mode)
     } else {
         let result: Vec<Value> = matches
             .into_iter()
@@ -97,7 +97,7 @@ pub async fn search(
                 })
             })
             .collect();
-        Ok(format_output(&Value::Array(result), mode))
+        format_output(&Value::Array(result), mode)
     }
 }
 

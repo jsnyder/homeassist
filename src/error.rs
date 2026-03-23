@@ -8,10 +8,13 @@ pub enum AppError {
     #[error("Home Assistant token not configured. Set HA_TOKEN or use --token")]
     MissingToken,
 
+    #[error("{path} has insecure permissions ({mode:o}). Run: chmod 600 {path}")]
+    InsecurePermissions { path: String, mode: u32 },
+
     #[error("HTTP {status}: {message}")]
     Http { status: u16, message: String },
 
-    #[error("Connection failed: {0}")]
+    #[error("Connection failed: unable to reach Home Assistant")]
     Connection(String),
 
     #[error("Invalid JSON for --{option}: {message}")]
@@ -25,6 +28,9 @@ pub enum AppError {
 
     #[error("Invalid regex pattern: {0}")]
     InvalidPattern(String),
+
+    #[error("Serialization error: {0}")]
+    Serialization(String),
 
     #[error("{0}")]
     Other(String),
@@ -43,12 +49,15 @@ pub struct ErrorOutput {
 impl AppError {
     pub fn code(&self) -> &str {
         match self {
-            AppError::MissingUrl | AppError::MissingToken => "AUTH_FAILED",
+            AppError::MissingUrl => "CONFIG_ERROR",
+            AppError::MissingToken => "AUTH_FAILED",
+            AppError::InsecurePermissions { .. } => "AUTH_FAILED",
             AppError::Http { .. } | AppError::Connection(_) => "CONNECTION_FAILED",
             AppError::JsonParse { .. } => "JSON_PARSE_ERROR",
             AppError::InvalidServiceFormat { .. } => "INVALID_SERVICE",
             AppError::InvalidReloadComponent { .. } => "INVALID_COMPONENT",
             AppError::InvalidPattern(_) => "INVALID_PATTERN",
+            AppError::Serialization(_) => "SERIALIZATION_ERROR",
             AppError::Other(_) => "UNKNOWN_ERROR",
         }
     }
@@ -66,15 +75,22 @@ impl AppError {
 impl From<reqwest::Error> for AppError {
     fn from(err: reqwest::Error) -> Self {
         if err.is_connect() {
+            // Store raw error internally but display sanitized message
             AppError::Connection(err.to_string())
         } else if let Some(status) = err.status() {
             AppError::Http {
                 status: status.as_u16(),
-                message: err.to_string(),
+                message: status.canonical_reason().unwrap_or("Request failed").to_string(),
             }
         } else {
             AppError::Other(err.to_string())
         }
+    }
+}
+
+impl From<serde_json::Error> for AppError {
+    fn from(err: serde_json::Error) -> Self {
+        AppError::Serialization(err.to_string())
     }
 }
 
@@ -84,7 +100,7 @@ mod tests {
 
     #[test]
     fn error_codes_are_correct() {
-        assert_eq!(AppError::MissingUrl.code(), "AUTH_FAILED");
+        assert_eq!(AppError::MissingUrl.code(), "CONFIG_ERROR");
         assert_eq!(AppError::MissingToken.code(), "AUTH_FAILED");
         assert_eq!(
             AppError::Http {
@@ -108,7 +124,7 @@ mod tests {
         let err = AppError::MissingUrl;
         let output = err.to_error_output();
         let json = serde_json::to_string(&output).unwrap();
-        assert!(json.contains("AUTH_FAILED"));
+        assert!(json.contains("CONFIG_ERROR"));
         assert!(json.contains("HA_URL"));
         // Optional fields should be absent
         assert!(!json.contains("entity_id"));
@@ -121,5 +137,22 @@ mod tests {
             message: "Unauthorized".into(),
         };
         assert_eq!(err.to_string(), "HTTP 401: Unauthorized");
+    }
+
+    #[test]
+    fn connection_error_is_sanitized() {
+        let err = AppError::Connection("reqwest::Error { kind: Connect, url: https://internal.host:8123 }".into());
+        // Display output should NOT contain the raw reqwest details
+        assert_eq!(err.to_string(), "Connection failed: unable to reach Home Assistant");
+    }
+
+    #[test]
+    fn insecure_permissions_error() {
+        let err = AppError::InsecurePermissions {
+            path: "~/.ha_token".into(),
+            mode: 0o644,
+        };
+        assert!(err.to_string().contains("chmod 600"));
+        assert_eq!(err.code(), "AUTH_FAILED");
     }
 }

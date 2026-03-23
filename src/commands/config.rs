@@ -6,7 +6,7 @@ use serde_json::json;
 
 pub async fn check(client: &HaClient, mode: OutputMode) -> Result<String, AppError> {
     let result = client.check_config().await?;
-    Ok(format_output(&result, mode))
+    format_output(&result, mode)
 }
 
 pub async fn reload(
@@ -32,8 +32,8 @@ pub async fn reload(
         reloaded.push("scenes");
     }
 
-    Ok(format_output(
+    format_output(
         &json!({ "success": true, "reloaded": reloaded }),
         mode,
-    ))
+    )
 }

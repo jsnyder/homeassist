@@ -757,6 +757,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "httpmock",
+ "percent-encoding",
  "predicates",
  "regex",
  "reqwest",

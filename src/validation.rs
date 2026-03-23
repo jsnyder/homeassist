@@ -5,7 +5,8 @@ const MAX_PATTERN_LENGTH: usize = 200;
 
 /// Safely compile a user-provided regex pattern.
 /// The `regex` crate guarantees O(n) matching — no ReDoS possible.
-pub fn safe_regex(pattern: &str) -> Result<Regex, AppError> {
+/// Pass `case_insensitive: true` to prepend `(?i)`.
+pub fn safe_regex(pattern: &str, case_insensitive: bool) -> Result<Regex, AppError> {
     if pattern.is_empty() {
         return Err(AppError::InvalidPattern(
             "Pattern must be a non-empty string".into(),
@@ -13,10 +14,15 @@ pub fn safe_regex(pattern: &str) -> Result<Regex, AppError> {
     }
     if pattern.len() > MAX_PATTERN_LENGTH {
         return Err(AppError::InvalidPattern(format!(
-            "Pattern too long (max {MAX_PATTERN_LENGTH} characters)"
+            "Pattern too long (max {MAX_PATTERN_LENGTH} bytes)"
         )));
     }
-    Regex::new(&format!("(?i){pattern}"))
+    let pat = if case_insensitive {
+        format!("(?i){pattern}")
+    } else {
+        pattern.to_string()
+    };
+    Regex::new(&pat)
         .map_err(|e| AppError::InvalidPattern(e.to_string()))
 }
 
@@ -78,31 +84,39 @@ mod tests {
 
     #[test]
     fn safe_regex_valid_pattern() {
-        let re = safe_regex("kitchen").unwrap();
+        let re = safe_regex("kitchen", false).unwrap();
+        assert!(re.is_match("light.kitchen"));
+        assert!(!re.is_match("KITCHEN_sensor")); // case-sensitive by default
+    }
+
+    #[test]
+    fn safe_regex_case_insensitive() {
+        let re = safe_regex("Kitchen", true).unwrap();
         assert!(re.is_match("light.kitchen"));
         assert!(re.is_match("KITCHEN_sensor"));
     }
 
     #[test]
-    fn safe_regex_case_insensitive() {
-        let re = safe_regex("Kitchen").unwrap();
-        assert!(re.is_match("light.kitchen"));
+    fn safe_regex_case_sensitive() {
+        let re = safe_regex("Kitchen", false).unwrap();
+        assert!(!re.is_match("light.kitchen"));
+        assert!(re.is_match("Kitchen_sensor"));
     }
 
     #[test]
     fn safe_regex_empty_pattern_errors() {
-        assert!(safe_regex("").is_err());
+        assert!(safe_regex("", false).is_err());
     }
 
     #[test]
     fn safe_regex_too_long_errors() {
         let long = "a".repeat(201);
-        assert!(safe_regex(&long).is_err());
+        assert!(safe_regex(&long, false).is_err());
     }
 
     #[test]
     fn safe_regex_invalid_syntax_errors() {
-        assert!(safe_regex("[invalid").is_err());
+        assert!(safe_regex("[invalid", false).is_err());
     }
 
     // No ReDoS test needed — Rust's regex crate is O(n) by design

@@ -5,7 +5,7 @@ use serde_json::json;
 
 pub async fn check(client: &HaClient, url: &str, mode: OutputMode) -> Result<String, AppError> {
     let config = client.get_config().await?;
-    Ok(format_output(
+    format_output(
         &json!({
             "status": "connected",
             "version": config.get("version"),
@@ -13,5 +13,5 @@ pub async fn check(client: &HaClient, url: &str, mode: OutputMode) -> Result<Str
             "url": url,
         }),
         mode,
-    ))
+    )
 }
