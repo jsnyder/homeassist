@@ -127,7 +127,6 @@ impl HaClient {
         hours: u32,
     ) -> Result<Vec<Vec<Value>>, AppError> {
         let start = chrono_offset(hours)?;
-        let encoded_id = encode_path_segment(entity_id);
         let url = format!("{}/api/history/period/{start}", self.base_url);
         let resp = self
             .client
@@ -138,9 +137,34 @@ impl HaClient {
             ])
             .send()
             .await?;
-        let _ = encoded_id; // entity_id passed via query param, not path
         let resp = self.check_response(resp).await?;
         resp.json().await.map_err(Into::into)
+    }
+
+    pub async fn get_logbook(
+        &self,
+        entity_id: &str,
+        hours: u32,
+    ) -> Result<Vec<Value>, AppError> {
+        let start = chrono_offset(hours)?;
+        let url = format!("{}/api/logbook/{start}", self.base_url);
+        let resp = self
+            .client
+            .get(&url)
+            .query(&[("entity", entity_id)])
+            .send()
+            .await?;
+        let resp = self.check_response(resp).await?;
+        resp.json().await.map_err(Into::into)
+    }
+
+    pub async fn fire_event(
+        &self,
+        event_type: &str,
+        data: Value,
+    ) -> Result<Value, AppError> {
+        let encoded = encode_path_segment(event_type);
+        self.post(&format!("/events/{encoded}"), &data).await
     }
 
     /// Transform services array into domain -> services map

@@ -60,6 +60,36 @@ enum Commands {
         #[command(subcommand)]
         action: ConfigAction,
     },
+    /// Entity state history
+    History {
+        #[command(subcommand)]
+        action: HistoryAction,
+    },
+    /// Error log access
+    Logs {
+        #[command(subcommand)]
+        action: LogAction,
+    },
+    /// Event timeline (logbook)
+    Logbook {
+        #[command(subcommand)]
+        action: LogbookAction,
+    },
+    /// Fire events
+    Events {
+        #[command(subcommand)]
+        action: EventAction,
+    },
+    /// Automation operations
+    Automations {
+        #[command(subcommand)]
+        action: AutomationAction,
+    },
+    /// Script operations
+    Scripts {
+        #[command(subcommand)]
+        action: ScriptAction,
+    },
     /// Get server health and connection status
     Health,
     /// Show LLM-optimized usage documentation
@@ -129,6 +159,77 @@ enum ConfigAction {
     Reload {
         /// Component to reload
         component: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum HistoryAction {
+    /// Get entity state history
+    Get {
+        /// Entity ID
+        entity_id: String,
+        /// Hours of history (default: 24)
+        #[arg(long, default_value = "24")]
+        hours: u32,
+    },
+}
+
+#[derive(Subcommand)]
+enum LogAction {
+    /// Show error log entries
+    Errors {
+        /// Show only last N lines
+        #[arg(long)]
+        tail: Option<usize>,
+        /// Filter by regex pattern
+        #[arg(long)]
+        pattern: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum LogbookAction {
+    /// Get entity event timeline
+    Get {
+        /// Entity ID
+        entity_id: String,
+        /// Hours of history (default: 24)
+        #[arg(long, default_value = "24")]
+        hours: u32,
+    },
+}
+
+#[derive(Subcommand)]
+enum EventAction {
+    /// Fire an event
+    Fire {
+        /// Event type (e.g., custom_event)
+        event_type: String,
+        /// Event data as JSON
+        #[arg(long)]
+        data: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum AutomationAction {
+    /// List all automations
+    List,
+    /// Trigger an automation
+    Trigger {
+        /// Automation entity ID
+        entity_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ScriptAction {
+    /// List all scripts
+    List,
+    /// Run a script
+    Run {
+        /// Script entity ID (e.g., script.my_script)
+        entity_id: String,
     },
 }
 
@@ -210,6 +311,38 @@ async fn run(cli: Cli, mode: OutputMode) -> Result<(), AppError> {
                 commands::config::reload(&client, component.as_deref(), mode).await?
             }
         },
+        Commands::History { action } => match action {
+            HistoryAction::Get { entity_id, hours } => {
+                commands::history::get(&client, &entity_id, hours, mode).await?
+            }
+        },
+        Commands::Logs { action } => match action {
+            LogAction::Errors { tail, pattern } => {
+                commands::logs::errors(&client, tail, pattern.as_deref(), mode).await?
+            }
+        },
+        Commands::Logbook { action } => match action {
+            LogbookAction::Get { entity_id, hours } => {
+                commands::logbook::get(&client, &entity_id, hours, mode).await?
+            }
+        },
+        Commands::Events { action } => match action {
+            EventAction::Fire { event_type, data } => {
+                commands::events::fire(&client, &event_type, data.as_deref(), mode).await?
+            }
+        },
+        Commands::Automations { action } => match action {
+            AutomationAction::List => commands::automations::list(&client, mode).await?,
+            AutomationAction::Trigger { entity_id } => {
+                commands::automations::trigger(&client, &entity_id, mode).await?
+            }
+        },
+        Commands::Scripts { action } => match action {
+            ScriptAction::List => commands::automations::scripts_list(&client, mode).await?,
+            ScriptAction::Run { entity_id } => {
+                commands::automations::scripts_run(&client, &entity_id, mode).await?
+            }
+        },
         Commands::Health => {
             commands::health::check(&client, &auth_config.url, mode).await?
         }
@@ -233,7 +366,7 @@ QUICK REFERENCE:
   homeassist templates render \"{{{{ states('sensor.temp') }}}}\"
 
 ENTITY OPERATIONS:
-  homeassist entities list [--domain X] [--pattern X]
+  homeassist entities list [--domain X] [--pattern X] [--name X]
   homeassist entities get <entity_id>
   homeassist entities search <pattern>
 
@@ -247,6 +380,26 @@ TEMPLATE OPERATIONS:
 CONFIG OPERATIONS:
   homeassist config check
   homeassist config reload [automations|scripts|scenes|all]
+
+HISTORY:
+  homeassist history get <entity_id> [--hours 24]
+
+LOGS:
+  homeassist logs errors [--tail 50] [--pattern \"zigbee\"]
+
+LOGBOOK:
+  homeassist logbook get <entity_id> [--hours 24]
+
+EVENTS:
+  homeassist events fire <event_type> [--data '{{...}}']
+
+AUTOMATIONS:
+  homeassist automations list
+  homeassist automations trigger <entity_id>
+
+SCRIPTS:
+  homeassist scripts list
+  homeassist scripts run <entity_id>
 
 HEALTH:
   homeassist health

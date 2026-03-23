@@ -1,5 +1,10 @@
+pub mod automations;
+pub mod config;
 pub mod entities;
+pub mod events;
+pub mod health;
+pub mod history;
+pub mod logbook;
+pub mod logs;
 pub mod services;
 pub mod templates;
-pub mod config;
-pub mod health;
