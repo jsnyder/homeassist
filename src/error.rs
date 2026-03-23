@@ -32,6 +32,9 @@ pub enum AppError {
     #[error("Serialization error: {0}")]
     Serialization(String),
 
+    #[error("Authentication failed: {0}")]
+    Auth(String),
+
     #[error("{0}")]
     Other(String),
 }
@@ -58,6 +61,7 @@ impl AppError {
             AppError::InvalidReloadComponent { .. } => "INVALID_COMPONENT",
             AppError::InvalidPattern(_) => "INVALID_PATTERN",
             AppError::Serialization(_) => "SERIALIZATION_ERROR",
+            AppError::Auth(_) => "AUTH_FAILED",
             AppError::Other(_) => "UNKNOWN_ERROR",
         }
     }

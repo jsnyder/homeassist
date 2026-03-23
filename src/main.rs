@@ -5,6 +5,8 @@ mod error;
 mod output;
 pub mod ui;
 mod validation;
+pub mod ws;
+
 
 use clap::{Parser, Subcommand};
 use error::AppError;
@@ -396,7 +398,15 @@ async fn run(cli: Cli, mode: OutputMode) -> Result<(), AppError> {
         },
         Commands::Logs { action } => match action {
             LogAction::Errors { tail, pattern } => {
-                commands::logs::errors(&client, tail, pattern.as_deref(), mode).await?
+                commands::logs::errors(
+                    &client,
+                    &auth_config.url,
+                    &auth_config.token,
+                    tail,
+                    pattern.as_deref(),
+                    mode,
+                )
+                .await?
             }
         },
         Commands::Logbook { action } => match action {

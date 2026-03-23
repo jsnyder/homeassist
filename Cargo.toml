@@ -21,6 +21,8 @@ percent-encoding = "2"
 regex = "1"
 serde_yaml = "0.9"
 thiserror = "2"
+tokio-tungstenite = { version = "0.26", features = ["connect"] }
+futures-util = "0.3"
 glob = "0.3"
 
 [dev-dependencies]
