@@ -42,19 +42,28 @@ pub async fn run(
             AppError::Other(format!("Failed to read {}: {e}", file_path))
         })?;
 
-        // YAML syntax check
-        check_yaml_syntax(file_path, &content, &mut findings);
-
-        // Structural checks (only on valid YAML)
-        if serde_yaml::from_str::<serde_yaml::Value>(&content).is_ok() {
-            check_duplicate_keys(file_path, &content, &mut findings);
-            check_jinja_templates(file_path, &content, &mut findings);
-            check_common_errors(file_path, &content, &mut findings);
-            check_file_cruft(file_path, &mut findings);
-            check_package_exclusions(file_path, &content, &mut findings);
-            check_sensor_platforms(file_path, &content, &mut findings);
-            check_automation_syntax(file_path, &content, &mut findings);
-            detect_circular_references(file_path, &content, &mut findings);
+        // YAML syntax check (parse once, reuse for structural checks)
+        match serde_yaml::from_str::<serde_yaml::Value>(&content) {
+            Ok(yaml) => {
+                check_duplicate_keys(file_path, &content, &mut findings);
+                check_jinja_templates(file_path, &content, &mut findings);
+                check_common_errors(file_path, &content, &mut findings);
+                check_file_cruft(file_path, &mut findings);
+                check_package_exclusions(file_path, &content, &mut findings);
+                check_sensor_platforms(file_path, &yaml, &mut findings);
+                check_automation_syntax(file_path, &yaml, &mut findings);
+                detect_circular_references(file_path, &yaml, &mut findings);
+            }
+            Err(e) => {
+                let line = e.location().map(|l| l.line());
+                findings.push(Finding {
+                    file: file_path.to_string(),
+                    line,
+                    severity: "error",
+                    check: "yaml_syntax",
+                    message: format!("Invalid YAML: {e}"),
+                });
+            }
         }
     }
 
@@ -202,18 +211,6 @@ fn find_yaml_files(path: &Path) -> Result<Vec<String>, AppError> {
     Ok(files)
 }
 
-fn check_yaml_syntax(file: &str, content: &str, findings: &mut Vec<Finding>) {
-    if let Err(e) = serde_yaml::from_str::<serde_yaml::Value>(content) {
-        let line = e.location().map(|l| l.line());
-        findings.push(Finding {
-            file: file.to_string(),
-            line,
-            severity: "error",
-            check: "yaml_syntax",
-            message: format!("Invalid YAML: {e}"),
-        });
-    }
-}
 
 fn check_duplicate_keys(file: &str, content: &str, findings: &mut Vec<Finding>) {
     // Check for duplicate top-level keys (common HA config error)
@@ -472,12 +469,7 @@ async fn check_entity_references(
     }
 }
 
-fn check_sensor_platforms(file: &str, content: &str, findings: &mut Vec<Finding>) {
-    let yaml: serde_yaml::Value = match serde_yaml::from_str(content) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-
+fn check_sensor_platforms(file: &str, yaml: &serde_yaml::Value, findings: &mut Vec<Finding>) {
     for domain in &["sensor", "binary_sensor"] {
         if let Some(serde_yaml::Value::Sequence(items)) = yaml.get(domain) {
             for (i, item) in items.iter().enumerate() {
@@ -531,12 +523,7 @@ fn check_package_exclusions(file: &str, content: &str, findings: &mut Vec<Findin
     }
 }
 
-fn check_automation_syntax(file: &str, content: &str, findings: &mut Vec<Finding>) {
-    let yaml: serde_yaml::Value = match serde_yaml::from_str(content) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-
+fn check_automation_syntax(file: &str, yaml: &serde_yaml::Value, findings: &mut Vec<Finding>) {
     let automations = match yaml.get("automation") {
         Some(serde_yaml::Value::Sequence(items)) => items,
         _ => return,
@@ -597,12 +584,7 @@ fn check_automation_syntax(file: &str, content: &str, findings: &mut Vec<Finding
     }
 }
 
-fn detect_circular_references(file: &str, content: &str, findings: &mut Vec<Finding>) {
-    let yaml: serde_yaml::Value = match serde_yaml::from_str(content) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-
+fn detect_circular_references(file: &str, yaml: &serde_yaml::Value, findings: &mut Vec<Finding>) {
     let template = match yaml.get("template") {
         Some(serde_yaml::Value::Sequence(items)) => items,
         _ => return,
@@ -731,6 +713,10 @@ fn find_orphaned_registry_entries(
 mod tests {
     use super::*;
 
+    fn parse_yaml(content: &str) -> serde_yaml::Value {
+        serde_yaml::from_str(content).unwrap()
+    }
+
     #[test]
     fn detect_unbalanced_jinja() {
         let mut findings = Vec::new();
@@ -793,18 +779,15 @@ mod tests {
     }
 
     #[test]
-    fn valid_yaml_no_findings() {
-        let mut findings = Vec::new();
-        check_yaml_syntax("test.yaml", "sensor:\n  - platform: template\n", &mut findings);
-        assert!(findings.is_empty());
+    fn valid_yaml_parses() {
+        let result = serde_yaml::from_str::<serde_yaml::Value>("sensor:\n  - platform: template\n");
+        assert!(result.is_ok());
     }
 
     #[test]
-    fn invalid_yaml_has_finding() {
-        let mut findings = Vec::new();
-        check_yaml_syntax("test.yaml", "sensor:\n  bad: [unclosed", &mut findings);
-        assert_eq!(findings.len(), 1);
-        assert_eq!(findings[0].severity, "error");
+    fn invalid_yaml_fails_parse() {
+        let result = serde_yaml::from_str::<serde_yaml::Value>("sensor:\n  bad: [unclosed");
+        assert!(result.is_err());
     }
 
     #[test]
@@ -861,7 +844,7 @@ mod tests {
     fn sensor_platform_missing_detected() {
         let mut findings = Vec::new();
         let content = "sensor:\n  - name: My Sensor\n    state: '{{ 1 }}'\n";
-        check_sensor_platforms("test.yaml", content, &mut findings);
+        check_sensor_platforms("test.yaml", &parse_yaml(content), &mut findings);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].check, "missing_platform");
     }
@@ -870,7 +853,7 @@ mod tests {
     fn sensor_platform_present_no_finding() {
         let mut findings = Vec::new();
         let content = "sensor:\n  - platform: template\n    sensors:\n      test:\n        value_template: '{{ 1 }}'\n";
-        check_sensor_platforms("test.yaml", content, &mut findings);
+        check_sensor_platforms("test.yaml", &parse_yaml(content), &mut findings);
         assert!(findings.is_empty());
     }
 
@@ -878,7 +861,7 @@ mod tests {
     fn binary_sensor_platform_missing_detected() {
         let mut findings = Vec::new();
         let content = "binary_sensor:\n  - name: Door\n    state: 'on'\n";
-        check_sensor_platforms("test.yaml", content, &mut findings);
+        check_sensor_platforms("test.yaml", &parse_yaml(content), &mut findings);
         assert_eq!(findings.len(), 1);
     }
 
@@ -886,7 +869,7 @@ mod tests {
     fn sensor_not_a_list_no_panic() {
         let mut findings = Vec::new();
         let content = "sensor: true\n";
-        check_sensor_platforms("test.yaml", content, &mut findings);
+        check_sensor_platforms("test.yaml", &parse_yaml(content), &mut findings);
         assert!(findings.is_empty());
     }
 
@@ -894,7 +877,7 @@ mod tests {
     fn automation_syntax_valid_modern() {
         let mut findings = Vec::new();
         let content = "automation:\n  - alias: Test\n    triggers:\n      - trigger: state\n    actions:\n      - action: light.turn_on\n";
-        check_automation_syntax("test.yaml", content, &mut findings);
+        check_automation_syntax("test.yaml", &parse_yaml(content), &mut findings);
         assert!(findings.is_empty());
     }
 
@@ -902,7 +885,7 @@ mod tests {
     fn automation_syntax_valid_legacy() {
         let mut findings = Vec::new();
         let content = "automation:\n  - alias: Test\n    trigger:\n      - platform: state\n    action:\n      - service: light.turn_on\n";
-        check_automation_syntax("test.yaml", content, &mut findings);
+        check_automation_syntax("test.yaml", &parse_yaml(content), &mut findings);
         assert!(findings.is_empty());
     }
 
@@ -910,7 +893,7 @@ mod tests {
     fn automation_syntax_missing_trigger_errors() {
         let mut findings = Vec::new();
         let content = "automation:\n  - alias: Broken\n    action:\n      - service: light.turn_on\n";
-        check_automation_syntax("test.yaml", content, &mut findings);
+        check_automation_syntax("test.yaml", &parse_yaml(content), &mut findings);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].severity, "error");
         assert!(findings[0].message.contains("trigger"));
@@ -920,7 +903,7 @@ mod tests {
     fn automation_syntax_missing_action_errors() {
         let mut findings = Vec::new();
         let content = "automation:\n  - alias: Broken\n    trigger:\n      - platform: state\n";
-        check_automation_syntax("test.yaml", content, &mut findings);
+        check_automation_syntax("test.yaml", &parse_yaml(content), &mut findings);
         assert_eq!(findings.len(), 1);
         assert!(findings[0].message.contains("action"));
     }
@@ -929,7 +912,7 @@ mod tests {
     fn automation_syntax_missing_alias_warns() {
         let mut findings = Vec::new();
         let content = "automation:\n  - trigger:\n      - platform: state\n    action:\n      - service: light.turn_on\n";
-        check_automation_syntax("test.yaml", content, &mut findings);
+        check_automation_syntax("test.yaml", &parse_yaml(content), &mut findings);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].severity, "warning");
         assert!(findings[0].message.contains("alias"));
@@ -939,7 +922,7 @@ mod tests {
     fn automation_not_a_list_no_panic() {
         let mut findings = Vec::new();
         let content = "automation: !include automations.yaml\n";
-        check_automation_syntax("test.yaml", content, &mut findings);
+        check_automation_syntax("test.yaml", &parse_yaml(content), &mut findings);
         assert!(findings.is_empty());
     }
 
@@ -947,7 +930,7 @@ mod tests {
     fn automation_blueprint_skipped() {
         let mut findings = Vec::new();
         let content = "automation:\n  - alias: Blueprint Auto\n    use_blueprint:\n      path: my_blueprint.yaml\n      input:\n        some_input: value\n";
-        check_automation_syntax("test.yaml", content, &mut findings);
+        check_automation_syntax("test.yaml", &parse_yaml(content), &mut findings);
         assert!(findings.is_empty());
     }
 
@@ -963,7 +946,7 @@ mod tests {
     fn circular_ref_self_reference_detected() {
         let mut findings = Vec::new();
         let content = "template:\n  - sensor:\n      - name: Test Sensor\n        unique_id: test_sensor\n        state: \"{{ states('sensor.test_sensor') }}\"\n";
-        detect_circular_references("test.yaml", content, &mut findings);
+        detect_circular_references("test.yaml", &parse_yaml(content), &mut findings);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].check, "circular_reference");
         assert!(findings[0].message.contains("test_sensor"));
@@ -973,7 +956,7 @@ mod tests {
     fn circular_ref_no_self_reference_clean() {
         let mut findings = Vec::new();
         let content = "template:\n  - sensor:\n      - name: Average Temp\n        unique_id: avg_temp\n        state: \"{{ states('sensor.outdoor_temp') }}\"\n";
-        detect_circular_references("test.yaml", content, &mut findings);
+        detect_circular_references("test.yaml", &parse_yaml(content), &mut findings);
         assert!(findings.is_empty());
     }
 
@@ -981,7 +964,7 @@ mod tests {
     fn circular_ref_state_attr_self_reference() {
         let mut findings = Vec::new();
         let content = "template:\n  - sensor:\n      - name: Power Monitor\n        unique_id: power_monitor\n        state: \"{{ state_attr('sensor.power_monitor', 'watts') }}\"\n";
-        detect_circular_references("test.yaml", content, &mut findings);
+        detect_circular_references("test.yaml", &parse_yaml(content), &mut findings);
         assert_eq!(findings.len(), 1);
     }
 
@@ -989,7 +972,7 @@ mod tests {
     fn circular_ref_is_state_self_reference() {
         let mut findings = Vec::new();
         let content = "template:\n  - binary_sensor:\n      - name: Door Open\n        unique_id: door_open\n        state: \"{{ is_state('binary_sensor.door_open', 'on') }}\"\n";
-        detect_circular_references("test.yaml", content, &mut findings);
+        detect_circular_references("test.yaml", &parse_yaml(content), &mut findings);
         assert_eq!(findings.len(), 1);
     }
 
@@ -997,7 +980,7 @@ mod tests {
     fn circular_ref_name_derived_entity_id() {
         let mut findings = Vec::new();
         let content = "template:\n  - sensor:\n      - name: My Sensor\n        state: \"{{ states('sensor.my_sensor') }}\"\n";
-        detect_circular_references("test.yaml", content, &mut findings);
+        detect_circular_references("test.yaml", &parse_yaml(content), &mut findings);
         assert_eq!(findings.len(), 1);
     }
 
@@ -1005,7 +988,7 @@ mod tests {
     fn circular_ref_attribute_self_reference() {
         let mut findings = Vec::new();
         let content = "template:\n  - sensor:\n      - name: Power\n        unique_id: power_calc\n        state: \"{{ 100 }}\"\n        attributes:\n          trend: \"{{ states('sensor.power_calc') }}\"\n";
-        detect_circular_references("test.yaml", content, &mut findings);
+        detect_circular_references("test.yaml", &parse_yaml(content), &mut findings);
         assert_eq!(findings.len(), 1);
         assert!(findings[0].message.contains("attribute"));
     }
@@ -1014,7 +997,7 @@ mod tests {
     fn circular_ref_no_false_positive_on_similar_name() {
         let mut findings = Vec::new();
         let content = "template:\n  - sensor:\n      - name: Test Sensor\n        unique_id: test_sensor\n        state: \"{{ states('sensor.test_sensor_2') }}\"\n";
-        detect_circular_references("test.yaml", content, &mut findings);
+        detect_circular_references("test.yaml", &parse_yaml(content), &mut findings);
         assert!(findings.is_empty());
     }
 
@@ -1022,7 +1005,7 @@ mod tests {
     fn circular_ref_no_template_section_clean() {
         let mut findings = Vec::new();
         let content = "sensor:\n  - platform: template\n    sensors:\n      test:\n        value_template: '{{ 1 }}'\n";
-        detect_circular_references("test.yaml", content, &mut findings);
+        detect_circular_references("test.yaml", &parse_yaml(content), &mut findings);
         assert!(findings.is_empty());
     }
 
