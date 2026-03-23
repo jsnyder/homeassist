@@ -1,0 +1,13 @@
+{
+  "name": "homeassist",
+  "version": "0.2.0",
+  "description": "Token-efficient Home Assistant CLI for AI agents — entity control, service calls, history, automations, and deployment workflows",
+  "author": {
+    "name": "Jesse Snyder",
+    "url": "https://github.com/jsnyder"
+  },
+  "homepage": "https://github.com/jsnyder/homeassist",
+  "repository": "https://github.com/jsnyder/homeassist",
+  "license": "MIT",
+  "keywords": ["home-assistant", "iot", "smart-home", "cli", "automation"]
+}
