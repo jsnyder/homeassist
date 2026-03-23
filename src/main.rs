@@ -1,0 +1,255 @@
+mod auth;
+mod client;
+mod commands;
+mod error;
+mod output;
+mod validation;
+
+use clap::{Parser, Subcommand};
+use error::AppError;
+use output::OutputMode;
+
+#[derive(Parser)]
+#[command(name = "homeassist")]
+#[command(about = "Home Assistant CLI for LLM agents - JSON output, minimal tokens")]
+#[command(version)]
+struct Cli {
+    /// Home Assistant URL (env: HA_URL)
+    #[arg(long)]
+    url: Option<String>,
+
+    /// Access token (env: HA_TOKEN)
+    #[arg(long)]
+    token: Option<String>,
+
+    /// Human-readable output instead of JSON
+    #[arg(short = 'H', long)]
+    human: bool,
+
+    /// Compact output for LLM token savings (auto-enabled in Claude Code)
+    #[arg(short, long)]
+    compact: bool,
+
+    /// Disable compact mode even in LLM context
+    #[arg(long)]
+    no_compact: bool,
+
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Entity operations
+    Entities {
+        #[command(subcommand)]
+        action: EntityAction,
+    },
+    /// Service operations
+    Services {
+        #[command(subcommand)]
+        action: ServiceAction,
+    },
+    /// Template operations
+    Templates {
+        #[command(subcommand)]
+        action: TemplateAction,
+    },
+    /// Configuration operations
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+    /// Get server health and connection status
+    Health,
+    /// Show LLM-optimized usage documentation
+    Usage,
+}
+
+#[derive(Subcommand)]
+enum EntityAction {
+    /// List entities
+    List {
+        /// Filter by domain (e.g., light, sensor)
+        #[arg(long)]
+        domain: Option<String>,
+        /// Filter by regex pattern
+        #[arg(long)]
+        pattern: Option<String>,
+        /// Filter by regex on entity_id/friendly_name
+        #[arg(long)]
+        area: Option<String>,
+    },
+    /// Get single entity state
+    Get {
+        /// Entity ID
+        entity_id: String,
+    },
+    /// Search entities by pattern
+    Search {
+        /// Search pattern (regex)
+        pattern: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ServiceAction {
+    /// List available services
+    List {
+        /// Filter by domain
+        domain: Option<String>,
+    },
+    /// Call a service (format: domain.service)
+    Call {
+        /// Service name (e.g., light.turn_on)
+        service: String,
+        /// Service data as JSON
+        #[arg(long)]
+        data: Option<String>,
+        /// Target entities/areas/devices as JSON
+        #[arg(long)]
+        target: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum TemplateAction {
+    /// Render a Jinja2 template
+    Render {
+        /// Template string
+        template: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Validate Home Assistant configuration
+    Check,
+    /// Reload configuration (automations, scripts, scenes, all)
+    Reload {
+        /// Component to reload
+        component: Option<String>,
+    },
+}
+
+#[tokio::main]
+async fn main() {
+    let cli = Cli::parse();
+    let mode = OutputMode::auto_detect(cli.human, cli.compact, cli.no_compact);
+
+    if let Err(e) = run(cli, mode).await {
+        let output = e.to_error_output();
+        eprintln!("{}", serde_json::to_string_pretty(&output).unwrap());
+        std::process::exit(1);
+    }
+}
+
+async fn run(cli: Cli, mode: OutputMode) -> Result<(), AppError> {
+    // Usage doesn't need auth
+    if matches!(cli.command, Commands::Usage) {
+        print_usage();
+        return Ok(());
+    }
+
+    let auth_config = auth::resolve_auth(cli.url.as_deref(), cli.token.as_deref())?;
+    let client = client::HaClient::new(&auth_config)?;
+
+    let output = match cli.command {
+        Commands::Entities { action } => match action {
+            EntityAction::List {
+                domain,
+                pattern,
+                area,
+            } => {
+                commands::entities::list(
+                    &client,
+                    domain.as_deref(),
+                    pattern.as_deref(),
+                    area.as_deref(),
+                    mode,
+                )
+                .await?
+            }
+            EntityAction::Get { entity_id } => {
+                commands::entities::get(&client, &entity_id, mode).await?
+            }
+            EntityAction::Search { pattern } => {
+                commands::entities::search(&client, &pattern, mode).await?
+            }
+        },
+        Commands::Services { action } => match action {
+            ServiceAction::List { domain } => {
+                commands::services::list(&client, domain.as_deref(), mode).await?
+            }
+            ServiceAction::Call {
+                service,
+                data,
+                target,
+            } => {
+                commands::services::call(
+                    &client,
+                    &service,
+                    data.as_deref(),
+                    target.as_deref(),
+                    mode,
+                )
+                .await?
+            }
+        },
+        Commands::Templates { action } => match action {
+            TemplateAction::Render { template } => {
+                commands::templates::render(&client, &template, mode).await?
+            }
+        },
+        Commands::Config { action } => match action {
+            ConfigAction::Check => commands::config::check(&client, mode).await?,
+            ConfigAction::Reload { component } => {
+                commands::config::reload(&client, component.as_deref(), mode).await?
+            }
+        },
+        Commands::Health => {
+            commands::health::check(&client, &auth_config.url, mode).await?
+        }
+        Commands::Usage => unreachable!(),
+    };
+
+    if !output.is_empty() {
+        println!("{output}");
+    }
+    Ok(())
+}
+
+fn print_usage() {
+    print!(
+        "homeassist - Home Assistant CLI for LLM agents
+
+QUICK REFERENCE:
+  homeassist entities list --domain light
+  homeassist entities get light.kitchen
+  homeassist services call light.turn_on --data '{{\"entity_id\":\"light.kitchen\"}}'
+  homeassist templates render \"{{{{ states('sensor.temp') }}}}\"
+
+ENTITY OPERATIONS:
+  homeassist entities list [--domain X] [--pattern X]
+  homeassist entities get <entity_id>
+  homeassist entities search <pattern>
+
+SERVICE OPERATIONS:
+  homeassist services list [domain]
+  homeassist services call <domain.service> --data '{{...}}'
+
+TEMPLATE OPERATIONS:
+  homeassist templates render \"<template>\"
+
+CONFIG OPERATIONS:
+  homeassist config check
+  homeassist config reload [automations|scripts|scenes|all]
+
+HEALTH:
+  homeassist health
+
+OUTPUT: JSON default, --human for readable, --compact for LLM token savings
+AUTH: HA_URL + HA_TOKEN env vars, or --url/--token flags
+"
+    );
+}

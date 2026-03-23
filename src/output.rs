@@ -1,0 +1,172 @@
+use serde_json::Value;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OutputMode {
+    Json,
+    Compact,
+    Human,
+}
+
+impl OutputMode {
+    pub fn from_flags(human: bool, compact: bool) -> Self {
+        if human {
+            OutputMode::Human
+        } else if compact {
+            OutputMode::Compact
+        } else {
+            OutputMode::Json
+        }
+    }
+
+    /// Auto-detect compact mode when running inside an LLM agent
+    pub fn auto_detect(human: bool, compact: bool, no_compact: bool) -> Self {
+        if human {
+            return OutputMode::Human;
+        }
+        if no_compact {
+            return OutputMode::from_flags(human, compact);
+        }
+        if compact || std::env::var("CLAUDECODE").as_deref() == Ok("1") {
+            return OutputMode::Compact;
+        }
+        OutputMode::Json
+    }
+}
+
+pub fn format_output(data: &Value, mode: OutputMode) -> String {
+    match mode {
+        OutputMode::Json => serde_json::to_string_pretty(data).unwrap_or_default(),
+        OutputMode::Compact => {
+            if let Some(s) = data.as_str() {
+                s.to_string()
+            } else {
+                serde_json::to_string(data).unwrap_or_default()
+            }
+        }
+        OutputMode::Human => format_human(data),
+    }
+}
+
+pub fn format_entity_list(entities: &[Value], mode: OutputMode) -> String {
+    match mode {
+        OutputMode::Compact => entities
+            .iter()
+            .filter_map(|e| {
+                let id = e.get("entity_id")?.as_str()?;
+                let state = e.get("state")?.as_str().unwrap_or("unknown");
+                Some(format!("{id}\t{state}"))
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => format_output(&Value::Array(entities.to_vec()), mode),
+    }
+}
+
+fn format_human(data: &Value) -> String {
+    match data {
+        Value::String(s) => s.clone(),
+        Value::Array(arr) => arr.iter().map(format_human).collect::<Vec<_>>().join("\n"),
+        Value::Object(obj) => obj
+            .iter()
+            .map(|(k, v)| {
+                let val = match v {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                format!("{k}: {val}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn json_mode_pretty_prints() {
+        let data = json!({"key": "value"});
+        let output = format_output(&data, OutputMode::Json);
+        assert!(output.contains('\n'));
+        assert!(output.contains("key"));
+    }
+
+    #[test]
+    fn compact_mode_single_line() {
+        let data = json!({"key": "value"});
+        let output = format_output(&data, OutputMode::Compact);
+        assert!(!output.contains('\n'));
+        assert!(output.contains("key"));
+    }
+
+    #[test]
+    fn compact_mode_strings_unwrapped() {
+        let data = json!("hello world");
+        let output = format_output(&data, OutputMode::Compact);
+        assert_eq!(output, "hello world");
+    }
+
+    #[test]
+    fn human_mode_object() {
+        let data = json!({"status": "connected", "version": "2024.3"});
+        let output = format_output(&data, OutputMode::Human);
+        assert!(output.contains("status: connected"));
+        assert!(output.contains("version: 2024.3"));
+    }
+
+    #[test]
+    fn human_mode_array() {
+        let data = json!([{"name": "a"}, {"name": "b"}]);
+        let output = format_output(&data, OutputMode::Human);
+        assert!(output.contains("name: a"));
+        assert!(output.contains("name: b"));
+    }
+
+    #[test]
+    fn entity_list_compact_tsv() {
+        let entities = vec![
+            json!({"entity_id": "light.kitchen", "state": "on"}),
+            json!({"entity_id": "sensor.temp", "state": "72.5"}),
+        ];
+        let output = format_entity_list(&entities, OutputMode::Compact);
+        assert_eq!(output, "light.kitchen\ton\nsensor.temp\t72.5");
+    }
+
+    #[test]
+    fn entity_list_json_mode() {
+        let entities = vec![json!({"entity_id": "light.kitchen", "state": "on"})];
+        let output = format_entity_list(&entities, OutputMode::Json);
+        assert!(output.contains("light.kitchen"));
+        assert!(output.contains('\n')); // pretty printed
+    }
+
+    #[test]
+    fn auto_detect_claudecode_env() {
+        unsafe { std::env::set_var("CLAUDECODE", "1") };
+        let mode = OutputMode::auto_detect(false, false, false);
+        assert_eq!(mode, OutputMode::Compact);
+        unsafe { std::env::remove_var("CLAUDECODE") };
+    }
+
+    #[test]
+    fn auto_detect_no_compact_overrides() {
+        unsafe { std::env::set_var("CLAUDECODE", "1") };
+        let mode = OutputMode::auto_detect(false, false, true);
+        assert_eq!(mode, OutputMode::Json);
+        unsafe { std::env::remove_var("CLAUDECODE") };
+    }
+
+    #[test]
+    fn auto_detect_human_wins() {
+        let mode = OutputMode::auto_detect(true, true, false);
+        assert_eq!(mode, OutputMode::Human);
+    }
+
+    #[test]
+    fn from_flags_defaults_to_json() {
+        assert_eq!(OutputMode::from_flags(false, false), OutputMode::Json);
+    }
+}
