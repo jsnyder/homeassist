@@ -214,13 +214,15 @@ check_circular_refs = true        # detect template circular references
 3. **Phase 5c**: Docker and local transports
 4. **Phase 5d**: Issue tracking (baseline comparisons over time)
 
-## Architecture Decision: Websocket Support
+### Phase 5a: Deployment Validation (Tier 1)
+- `validate` command — YAML syntax, automation structure, Jinja balance, duplicates,
+  sensor platforms, common errors, cruft detection, entity reference checks
+- `verify` command — config validity, entity/automation audit, baseline delta
+- 40-170x faster than equivalent bash script validation
+- See [docs/deployment-validation.md](docs/deployment-validation.md)
 
-Features 1-4 all require websocket access. Adding websocket support would unlock a significant chunk of HA's API that is currently inaccessible via REST. The recommended approach:
-
-1. Add `tokio-tungstenite` dependency
-2. Create a `ws_client.rs` module with auth handshake and request/response pattern
-3. Implement traces first (highest value, most complex workaround it replaces)
-4. Repairs, areas, devices, labels follow naturally once websocket infra exists
-
-This is the single highest-leverage architectural change for future development.
+### WebSocket Support
+- `tokio-tungstenite` client with HA auth handshake, 30s timeouts, resource cleanup
+- `system_log/list` for universal log access (fixes HAOS REST 404)
+- 10 tests using real local WebSocket servers (no mocks)
+- Unlocks traces, repairs, areas, devices, labels (all WS-only APIs)
