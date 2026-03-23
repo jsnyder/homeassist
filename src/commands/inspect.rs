@@ -4,6 +4,10 @@ use crate::output::{format_output, OutputMode};
 use crate::ui;
 use serde_json::{json, Value};
 
+fn extract_domain(entity_id: &str) -> Option<&str> {
+    entity_id.split('.').next().filter(|d| !d.is_empty())
+}
+
 pub async fn triage(client: &HaClient, mode: OutputMode) -> Result<String, AppError> {
     let human = mode == OutputMode::Human;
     let states: Vec<Value> =
@@ -24,8 +28,7 @@ pub async fn triage(client: &HaClient, mode: OutputMode) -> Result<String, AppEr
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        // Count by domain
-        if let Some(domain) = entity_id.split('.').next() {
+        if let Some(domain) = extract_domain(entity_id) {
             *domain_counts.entry(domain.to_string()).or_insert(0) += 1;
         }
 
@@ -154,10 +157,17 @@ pub async fn triage(client: &HaClient, mode: OutputMode) -> Result<String, AppEr
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
-    fn domain_extraction() {
-        let entity_id = "sensor.living_room_temperature";
-        let domain = entity_id.split('.').next().unwrap();
-        assert_eq!(domain, "sensor");
+    fn extract_domain_from_entity_id() {
+        assert_eq!(extract_domain("sensor.living_room_temperature"), Some("sensor"));
+        assert_eq!(extract_domain("light.kitchen"), Some("light"));
+    }
+
+    #[test]
+    fn extract_domain_edge_cases() {
+        assert_eq!(extract_domain("no_dot"), Some("no_dot"));
+        assert_eq!(extract_domain(""), None);
     }
 }

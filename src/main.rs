@@ -3,6 +3,7 @@ mod client;
 mod commands;
 mod error;
 mod output;
+mod time;
 pub mod ui;
 mod validation;
 pub mod ws;

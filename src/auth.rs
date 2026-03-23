@@ -92,9 +92,14 @@ fn dirs_home() -> Option<PathBuf> {
 mod tests {
     use super::*;
     use std::env;
+    use std::sync::Mutex;
+
+    // Env vars are process-global — serialize tests that mutate them.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn resolve_auth_from_flags() {
+        // No env mutation needed — flags bypass env entirely
         let auth = resolve_auth(Some("http://ha.local:8123"), Some("test-token")).unwrap();
         assert_eq!(auth.url, "http://ha.local:8123");
         assert_eq!(auth.token, "test-token");
@@ -108,7 +113,7 @@ mod tests {
 
     #[test]
     fn resolve_auth_missing_url_errors() {
-        // Clear env vars for this test
+        let _lock = ENV_LOCK.lock().unwrap();
         unsafe { env::remove_var("HA_URL") };
         unsafe { env::remove_var("HA_TOKEN") };
         let err = resolve_auth(None, Some("tok")).unwrap_err();
@@ -117,6 +122,8 @@ mod tests {
 
     #[test]
     fn resolve_auth_missing_token_errors() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        unsafe { env::remove_var("HA_URL") };
         unsafe { env::remove_var("HA_TOKEN") };
         let err = resolve_auth(Some("http://ha.local"), None).unwrap_err();
         assert!(err.to_string().contains("HA_TOKEN"));
@@ -124,24 +131,26 @@ mod tests {
 
     #[test]
     fn resolve_auth_from_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
         unsafe { env::set_var("HA_URL", "http://env-ha:8123") };
         unsafe { env::set_var("HA_TOKEN", "env-token") };
         let auth = resolve_auth(None, None).unwrap();
-        assert_eq!(auth.url, "http://env-ha:8123");
-        assert_eq!(auth.token, "env-token");
         unsafe { env::remove_var("HA_URL") };
         unsafe { env::remove_var("HA_TOKEN") };
+        assert_eq!(auth.url, "http://env-ha:8123");
+        assert_eq!(auth.token, "env-token");
     }
 
     #[test]
     fn flags_override_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
         unsafe { env::set_var("HA_URL", "http://env-ha:8123") };
         unsafe { env::set_var("HA_TOKEN", "env-token") };
         let auth = resolve_auth(Some("http://flag-ha:8123"), Some("flag-token")).unwrap();
-        assert_eq!(auth.url, "http://flag-ha:8123");
-        assert_eq!(auth.token, "flag-token");
         unsafe { env::remove_var("HA_URL") };
         unsafe { env::remove_var("HA_TOKEN") };
+        assert_eq!(auth.url, "http://flag-ha:8123");
+        assert_eq!(auth.token, "flag-token");
     }
 
     #[test]
@@ -152,9 +161,9 @@ mod tests {
         fs::write(&url_path, "http://file-ha:8123\n").unwrap();
         fs::write(&token_path, "  file-token  \n").unwrap();
 
-        // read_token_file with absolute paths
-        let url = fs::read_to_string(&url_path).unwrap().trim().to_string();
-        let token = fs::read_to_string(&token_path).unwrap().trim().to_string();
+        // Actually call read_token_file (not fs::read_to_string)
+        let url = read_token_file(url_path.to_str().unwrap(), false).unwrap().unwrap();
+        let token = read_token_file(token_path.to_str().unwrap(), false).unwrap().unwrap();
         assert_eq!(url, "http://file-ha:8123");
         assert_eq!(token, "file-token");
     }

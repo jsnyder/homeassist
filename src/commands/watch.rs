@@ -89,11 +89,3 @@ pub async fn entity(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn timeout_duration_calculation() {
-        let timeout = std::time::Duration::from_secs(300);
-        assert_eq!(timeout.as_secs(), 300);
-    }
-}

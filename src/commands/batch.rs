@@ -4,6 +4,18 @@ use crate::output::OutputMode;
 use serde_json::{json, Value};
 use std::io::BufRead;
 
+fn parse_batch_command(line: &str) -> Result<(String, Value), AppError> {
+    let cmd: Value = serde_json::from_str(line)
+        .map_err(|e| AppError::Other(format!("Invalid JSON: {e}")))?;
+    let command = cmd
+        .get("command")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::Other("Missing 'command' field".into()))?
+        .to_string();
+    let args = cmd.get("args").cloned().unwrap_or(json!({}));
+    Ok((command, args))
+}
+
 /// Execute multiple commands from JSONL input (stdin or file).
 /// Each line is a JSON object with "command" and optional "args" fields.
 ///
@@ -36,19 +48,11 @@ pub async fn run(
             continue;
         }
 
-        let cmd: Value = serde_json::from_str(line).map_err(|e| {
-            AppError::Other(format!("Invalid JSON on line {}: {e}", i + 1))
+        let (command, args) = parse_batch_command(line).map_err(|e| {
+            AppError::Other(format!("Line {}: {e}", i + 1))
         })?;
 
-        let command = cmd
-            .get("command")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                AppError::Other(format!("Missing 'command' field on line {}", i + 1))
-            })?;
-
-        let args = cmd.get("args").cloned().unwrap_or(json!({}));
-        let result = execute_command(client, url, command, &args, mode).await;
+        let result = execute_command(client, url, &command, &args, mode).await;
 
         results.push(json!({
             "command": command,
@@ -130,22 +134,34 @@ async fn execute_command(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use super::*;
 
     #[test]
-    fn parse_batch_line() {
-        let line = r#"{"command":"entities.get","args":{"entity_id":"light.kitchen"}}"#;
-        let cmd: serde_json::Value = serde_json::from_str(line).unwrap();
-        assert_eq!(cmd["command"], "entities.get");
-        assert_eq!(cmd["args"]["entity_id"], "light.kitchen");
+    fn parse_batch_command_with_args() {
+        let (cmd, args) = parse_batch_command(
+            r#"{"command":"entities.get","args":{"entity_id":"light.kitchen"}}"#,
+        ).unwrap();
+        assert_eq!(cmd, "entities.get");
+        assert_eq!(args["entity_id"], "light.kitchen");
     }
 
     #[test]
-    fn parse_batch_line_no_args() {
-        let line = r#"{"command":"health"}"#;
-        let cmd: serde_json::Value = serde_json::from_str(line).unwrap();
-        assert_eq!(cmd["command"], "health");
-        let args = cmd.get("args").cloned().unwrap_or(json!({}));
+    fn parse_batch_command_no_args_defaults_to_empty_object() {
+        let (cmd, args) = parse_batch_command(r#"{"command":"health"}"#).unwrap();
+        assert_eq!(cmd, "health");
         assert!(args.is_object());
+        assert_eq!(args.as_object().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn parse_batch_command_missing_command_field_errors() {
+        let err = parse_batch_command(r#"{"args":{}}"#).unwrap_err();
+        assert!(err.to_string().contains("command"));
+    }
+
+    #[test]
+    fn parse_batch_command_invalid_json_errors() {
+        let err = parse_batch_command("not json").unwrap_err();
+        assert!(err.to_string().contains("Invalid JSON"));
     }
 }

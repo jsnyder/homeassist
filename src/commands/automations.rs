@@ -75,13 +75,16 @@ pub async fn scripts_list(client: &HaClient, mode: OutputMode) -> Result<String,
     }
 }
 
+fn strip_script_domain(entity_id: &str) -> &str {
+    entity_id.strip_prefix("script.").unwrap_or(entity_id)
+}
+
 pub async fn scripts_run(
     client: &HaClient,
     entity_id: &str,
     mode: OutputMode,
 ) -> Result<String, AppError> {
-    // Scripts can be called via script.turn_on or by their service name
-    let script_name = entity_id.strip_prefix("script.").unwrap_or(entity_id);
+    let script_name = strip_script_domain(entity_id);
     let data = json!({});
     client
         .call_service("script", script_name, data)
@@ -94,17 +97,15 @@ pub async fn scripts_run(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
-    fn strip_script_prefix() {
-        let id = "script.my_script";
-        let name = id.strip_prefix("script.").unwrap_or(id);
-        assert_eq!(name, "my_script");
+    fn strip_script_domain_with_prefix() {
+        assert_eq!(strip_script_domain("script.my_script"), "my_script");
     }
 
     #[test]
-    fn no_prefix_passes_through() {
-        let id = "my_script";
-        let name = id.strip_prefix("script.").unwrap_or(id);
-        assert_eq!(name, "my_script");
+    fn strip_script_domain_without_prefix() {
+        assert_eq!(strip_script_domain("my_script"), "my_script");
     }
 }
