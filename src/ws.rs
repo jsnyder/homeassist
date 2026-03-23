@@ -156,7 +156,14 @@ impl HaWebSocket {
 
     async fn recv(&mut self) -> Result<Value, AppError> {
         loop {
-            match self.read.next().await {
+            let next = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                self.read.next(),
+            )
+            .await
+            .map_err(|_| AppError::Other("WebSocket receive timed out".to_string()))?;
+
+            match next {
                 Some(Ok(Message::Text(text))) => {
                     return serde_json::from_str(&text).map_err(|e| {
                         AppError::Other(format!("WebSocket JSON parse failed: {e}"))

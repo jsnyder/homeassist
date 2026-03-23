@@ -15,12 +15,11 @@ fn format_log_entry(entry: &Value) -> String {
         .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
-    let message = entry
-        .get("message")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let message = match entry.get("message") {
+        Some(Value::String(s)) => s.as_str(),
+        Some(Value::Array(arr)) => arr.first().and_then(Value::as_str).unwrap_or(""),
+        _ => "",
+    };
     let count = entry
         .get("count")
         .and_then(|v| v.as_u64())
@@ -81,8 +80,10 @@ pub async fn errors(
 
 async fn fetch_ws_logs(base_url: &str, token: &str) -> Result<Vec<Value>, AppError> {
     let mut ws = HaWebSocket::connect(base_url, token).await?;
-    let result = ws.command("system_log/list").await?;
+    let command_result = ws.command("system_log/list").await;
     ws.close().await;
+
+    let result = command_result?;
     result
         .as_array()
         .cloned()
