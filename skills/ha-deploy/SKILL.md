@@ -14,17 +14,21 @@ Run before deploying config to HA:
 ```bash
 homeassist validate ./packages                    # YAML syntax + structure
 homeassist validate ./packages --check-entities   # + verify entity refs against live HA
+homeassist validate ./packages --check-registry   # + detect orphaned entity registry entries
 ```
 
 ### What it checks
 - YAML syntax and structure
-- Automation structure (triggers/conditions/actions)
+- Package exclusion (blocked top-level keys like recorder, logger in packages)
+- Automation syntax (trigger/action required, alias recommended, blueprint-aware)
+- Sensor/binary_sensor platform validation
+- Circular reference detection (template sensors referencing themselves)
 - Jinja2 template balance
 - Duplicate entity IDs across files
-- Sensor platform required fields
-- Common errors (hardcoded IPs, deprecated syntax)
+- Common errors (tabs, bare unavailable, None thresholds)
 - File cruft (backup files, temp files)
 - Entity references exist in live HA (`--check-entities`)
+- Orphaned entity registry entries (`--check-registry`, via WebSocket)
 
 ### Exit codes
 - `0` — no errors (warnings are non-blocking)
@@ -49,7 +53,7 @@ homeassist verify --baseline snapshot.json     # Compare against baseline
 
 ```bash
 # 1. Validate locally
-homeassist validate ./packages --check-entities || exit 1
+homeassist validate ./packages --check-entities --check-registry || exit 1
 
 # 2. Deploy (rsync, git pull, etc.)
 rsync -av packages/ root@ha-host:/config/packages/

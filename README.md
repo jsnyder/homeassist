@@ -82,7 +82,7 @@ homeassist inspect                                   # System health audit
 | `diff` | Entities that changed state recently |
 | `watch <id>` | Watch entity for state changes |
 | `inspect` | Audit system health |
-| `validate [path]` | Validate HA YAML config files |
+| `validate [path]` | Validate HA YAML config files (`--check-entities`, `--check-registry`) |
 | `verify` | Post-deploy health verification |
 | `health` | Server connection status |
 | `completions <shell>` | Generate shell completions |
@@ -109,8 +109,8 @@ compiled binary that runs **40-170x faster**:
 | Full validate + verify pipeline | ~42s | **1.3s** | ~32x |
 
 ```bash
-homeassist validate ./packages --check-entities || exit 1   # pre-deploy
-homeassist verify --baseline snapshot.json                   # post-deploy
+homeassist validate ./packages --check-entities --check-registry || exit 1   # pre-deploy
+homeassist verify --baseline snapshot.json                                    # post-deploy
 ```
 
 See [docs/deployment-validation.md](docs/deployment-validation.md) for the full
@@ -123,6 +123,8 @@ REST. This includes:
 
 - **System logs** (`system_log/list`) — works on all HA installs including HAOS
   and container setups where the REST `/api/error_log` endpoint returns 404
+- **Entity registry** (`config/entity_registry/list`) — orphaned entry detection
+  via `validate --check-registry`
 
 The WebSocket client handles the full HA auth handshake with 30-second timeouts
 and automatic resource cleanup.
@@ -134,7 +136,7 @@ and automatic resource cleanup.
 - **HTTP client**: reqwest with rustls-tls
 - **WebSocket**: tokio-tungstenite
 - **CLI framework**: clap (derive)
-- **Tests**: 92 unit/integration tests using real WebSocket servers (no mocks)
+- **Tests**: 125 unit/integration tests using real WebSocket servers (no mocks)
 
 ## License
 

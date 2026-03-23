@@ -51,8 +51,8 @@ homeassist templates render "{{ states('sensor.temp') }}"
 ## Deployment
 
 ```bash
-homeassist validate ./packages --check-entities || exit 1  # Pre-deploy
-homeassist verify --baseline snapshot.json                  # Post-deploy
+homeassist validate ./packages --check-entities --check-registry || exit 1  # Pre-deploy
+homeassist verify --baseline snapshot.json                                   # Post-deploy
 ```
 
 ## Output Modes
