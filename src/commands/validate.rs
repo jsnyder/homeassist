@@ -51,6 +51,7 @@ pub async fn run(
             check_jinja_templates(file_path, &content, &mut findings);
             check_common_errors(file_path, &content, &mut findings);
             check_file_cruft(file_path, &mut findings);
+            check_package_exclusions(file_path, &content, &mut findings);
         }
     }
 
@@ -321,18 +322,6 @@ fn check_common_errors(file: &str, content: &str, findings: &mut Vec<Finding>) {
             });
         }
 
-        // Check for recorder in package files (can override main config)
-        if trimmed == "recorder:" && !file.contains("configuration") {
-            findings.push(Finding {
-                file: file.to_string(),
-                line: Some(line_num + 1),
-                severity: "error",
-                check: "package_recorder",
-                message: "Package-level recorder config overrides main configuration — move to configuration.yaml"
-                    .to_string(),
-            });
-        }
-
         // Check for tabs (YAML doesn't allow tabs for indentation)
         if line.contains('\t') && !trimmed.starts_with('#') {
             findings.push(Finding {
@@ -480,6 +469,36 @@ async fn check_entity_references(
     }
 }
 
+fn check_package_exclusions(file: &str, content: &str, findings: &mut Vec<Finding>) {
+    if !file.contains("/packages/") && !file.starts_with("packages/") {
+        return;
+    }
+
+    const BLOCKED_KEYS: &[&str] = &[
+        "homeassistant", "default_config", "frontend", "http",
+        "recorder", "logger", "history", "logbook",
+    ];
+
+    for (line_num, line) in content.lines().enumerate() {
+        if !line.starts_with(' ') && !line.starts_with('#') && !line.trim().is_empty() {
+            if let Some(key) = line.split(':').next() {
+                let key = key.trim();
+                if BLOCKED_KEYS.contains(&key) {
+                    findings.push(Finding {
+                        file: file.to_string(),
+                        line: Some(line_num + 1),
+                        severity: "error",
+                        check: "package_exclusion",
+                        message: format!(
+                            "Package contains '{key}:' which overrides main config — move to configuration.yaml"
+                        ),
+                    });
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -531,14 +550,6 @@ mod tests {
     }
 
     #[test]
-    fn detect_package_recorder() {
-        let mut findings = Vec::new();
-        check_common_errors("packages/my_pkg.yaml", "recorder:", &mut findings);
-        assert_eq!(findings.len(), 1);
-        assert_eq!(findings[0].check, "package_recorder");
-    }
-
-    #[test]
     fn cruft_detection() {
         let mut findings = Vec::new();
         check_file_cruft("packages/hvac_v2.yaml", &mut findings);
@@ -566,5 +577,55 @@ mod tests {
         check_yaml_syntax("test.yaml", "sensor:\n  bad: [unclosed", &mut findings);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].severity, "error");
+    }
+
+    #[test]
+    fn package_exclusion_blocks_homeassistant_key() {
+        let mut findings = Vec::new();
+        let content = "homeassistant:\n  name: My Home\nsensor:\n  - platform: template\n";
+        check_package_exclusions("packages/bad.yaml", content, &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, "error");
+        assert_eq!(findings[0].check, "package_exclusion");
+    }
+
+    #[test]
+    fn package_exclusion_allows_normal_keys() {
+        let mut findings = Vec::new();
+        let content = "sensor:\n  - platform: template\nautomation:\n  - alias: test\n";
+        check_package_exclusions("packages/good.yaml", content, &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn package_exclusion_blocks_recorder_key() {
+        let mut findings = Vec::new();
+        let content = "recorder:\n  purge_keep_days: 5\n";
+        check_package_exclusions("packages/recorder.yaml", content, &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn package_exclusion_skips_non_package_files() {
+        let mut findings = Vec::new();
+        let content = "homeassistant:\n  name: My Home\n";
+        check_package_exclusions("configuration.yaml", content, &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn package_exclusion_ignores_nested_key_names() {
+        let mut findings = Vec::new();
+        let content = "sensor:\n  - platform: template\n    sensors:\n      test:\n        value_template: \"{{ states('recorder.something') }}\"\n";
+        check_package_exclusions("packages/tricky.yaml", content, &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn package_exclusion_blocks_multiple_keys() {
+        let mut findings = Vec::new();
+        let content = "recorder:\n  purge_keep_days: 5\nlogger:\n  default: warning\n";
+        check_package_exclusions("packages/monitoring.yaml", content, &mut findings);
+        assert_eq!(findings.len(), 2);
     }
 }
