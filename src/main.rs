@@ -3,6 +3,7 @@ mod client;
 mod commands;
 mod error;
 mod output;
+pub mod ui;
 mod validation;
 
 use clap::{Parser, Subcommand};

@@ -1,6 +1,7 @@
 use crate::client::HaClient;
 use crate::error::AppError;
 use crate::output::{format_entity_list, format_output, OutputMode};
+use crate::ui;
 use crate::validation::safe_regex;
 use serde_json::{json, Value};
 
@@ -11,7 +12,9 @@ pub async fn list(
     name: Option<&str>,
     mode: OutputMode,
 ) -> Result<String, AppError> {
-    let mut states = client.get_states().await?;
+    let human = mode == OutputMode::Human;
+    let mut states =
+        ui::with_spinner("Loading entities\u{2026}", human, client.get_states()).await?;
 
     if let Some(d) = domain {
         let prefix = format!("{d}.");
@@ -34,6 +37,13 @@ pub async fn list(
 
     if mode == OutputMode::Compact {
         format_entity_list(&states, mode)
+    } else if mode == OutputMode::Human {
+        let s = ui::Style::detect();
+        let title = match domain {
+            Some(d) => format!("Entities \u{2014} {d}"),
+            None => "Entities".to_string(),
+        };
+        Ok(ui::entity_table(&states, &title, &s))
     } else {
         let result: Vec<Value> = states
             .into_iter()
@@ -86,6 +96,10 @@ pub async fn search(
 
     if mode == OutputMode::Compact {
         format_entity_list(&matches, mode)
+    } else if mode == OutputMode::Human {
+        let s = ui::Style::detect();
+        let title = format!("Search \u{2014} {pattern}");
+        Ok(ui::entity_table(&matches, &title, &s))
     } else {
         let result: Vec<Value> = matches
             .into_iter()

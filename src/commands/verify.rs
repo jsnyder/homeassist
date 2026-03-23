@@ -1,6 +1,7 @@
 use crate::client::HaClient;
 use crate::error::AppError;
 use crate::output::{format_output, OutputMode};
+use crate::ui;
 use serde_json::{json, Value};
 
 pub async fn check(
@@ -10,11 +11,19 @@ pub async fn check(
     mode: OutputMode,
 ) -> Result<String, AppError> {
     // Run all checks concurrently
-    let (config_result, states_result, automations_result) = tokio::join!(
-        client.get_config(),
-        client.get_states(),
-        client.get_states(), // reuse for automation filtering
-    );
+    let human = mode == OutputMode::Human;
+    let (config_result, states_result, automations_result) = ui::with_spinner(
+        "Running checks\u{2026}",
+        human,
+        async {
+            tokio::join!(
+                client.get_config(),
+                client.get_states(),
+                client.get_states(),
+            )
+        },
+    )
+    .await;
 
     let config: Value = config_result?;
     let states: Vec<Value> = states_result?;
@@ -150,6 +159,83 @@ pub async fn check(
             serde_json::to_string(&snapshot).unwrap_or_default()
         );
         Ok(lines.join("\n"))
+    } else if mode == OutputMode::Human {
+        let s = ui::Style::detect();
+        let w = 14;
+        let mut out = format!("{}\n\n", s.header("Deployment Verification"));
+
+        // Config & version
+        let config_display = if config_valid {
+            format!("{}valid{}", s.green, s.reset)
+        } else {
+            format!("{}INVALID{}", s.red, s.reset)
+        };
+        out.push_str(&format!("{}\n", s.kv("Config", w, &config_display)));
+        out.push_str(&format!("{}\n", s.kv("Version", w, version)));
+        out.push_str(&format!("{}\n\n", s.kv("Location", w, location)));
+
+        // Entities
+        out.push_str(&format!(
+            "{}\n",
+            s.kv("Entities", w, &format!("{} total", ui::fmt_num(total)))
+        ));
+        if unavailable > 0 {
+            out.push_str(&format!(
+                "  {:<w$}  {}{} unavailable{}\n",
+                "", ui::fmt_num(unavailable), s.reset, s.reset,
+                w = w,
+            ));
+        }
+        if unknown > 0 {
+            out.push_str(&format!(
+                "  {:<w$}  {}{} unknown{}\n",
+                "", ui::fmt_num(unknown), s.reset, s.reset,
+                w = w,
+            ));
+        }
+        out.push('\n');
+
+        // Automations
+        out.push_str(&format!(
+            "{}\n",
+            s.kv(
+                "Automations",
+                w,
+                &format!(
+                    "{} on {}·{} {} off {}·{} {} total",
+                    automations_on, s.dim, s.reset,
+                    automations_off, s.dim, s.reset,
+                    automations.len()
+                )
+            )
+        ));
+
+        // Baseline delta
+        if let Some(ref delta) = baseline_delta {
+            let ud = delta
+                .get("unavailable_delta")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let uk = delta
+                .get("unknown_delta")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let delta_str = format!("unavailable {:+}, unknown {:+}", ud, uk);
+            out.push_str(&format!("\n{}\n", s.kv("Baseline", w, &delta_str)));
+        }
+
+        // Result
+        out.push('\n');
+        if passed {
+            out.push_str(&format!("  {}\n", s.pass("All checks passed")));
+        } else {
+            out.push_str(&format!("  {}\n", s.fail("Issues detected")));
+            for issue in &issues {
+                out.push_str(&format!("    {} {}\n", s.fail(""), issue));
+            }
+        }
+
+        Ok(out)
     } else {
         let mut result = json!({
             "passed": passed,

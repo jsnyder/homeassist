@@ -1,6 +1,7 @@
 use crate::client::HaClient;
 use crate::error::AppError;
 use crate::output::{format_output, OutputMode};
+use crate::ui;
 use regex::Regex;
 use serde_json::json;
 use std::collections::HashMap;
@@ -78,9 +79,58 @@ pub async fn run(
                 Some(l) => format!("{}:{}", f.file, l),
                 None => f.file.clone(),
             };
-            lines.push(format!("{}\t{}\t{}\t{}", f.severity, f.check, loc, f.message));
+            lines.push(format!(
+                "{}\t{}\t{}\t{}",
+                f.severity, f.check, loc, f.message
+            ));
         }
         Ok(lines.join("\n"))
+    } else if mode == OutputMode::Human {
+        let s = ui::Style::detect();
+        let mut out = format!(
+            "{}\n\n",
+            s.header(&format!(
+                "YAML Validation \u{2014} {} files",
+                yaml_files.len()
+            ))
+        );
+
+        // Summary line
+        if errors == 0 && warnings == 0 {
+            out.push_str(&format!("  {}\n", s.pass("No issues found")));
+        } else {
+            let mut parts = Vec::new();
+            if errors > 0 {
+                parts.push(format!("{}{} error{}{}", s.red, errors, if errors == 1 { "" } else { "s" }, s.reset));
+            }
+            if warnings > 0 {
+                parts.push(format!("{}{} warning{}{}", s.yellow, warnings, if warnings == 1 { "" } else { "s" }, s.reset));
+            }
+            out.push_str(&format!("  {}\n", parts.join(&format!("  {}·{}  ", s.dim, s.reset))));
+        }
+
+        // Findings grouped by severity
+        if !findings.is_empty() {
+            out.push('\n');
+            for f in &findings {
+                let loc = match f.line {
+                    Some(l) => format!("{}:{}", ui::basename(&f.file), l),
+                    None => ui::basename(&f.file).to_string(),
+                };
+                out.push_str(&format!(
+                    "  {}{}{}\n",
+                    s.dim, loc, s.reset,
+                ));
+                let icon = if f.severity == "error" {
+                    s.fail("")
+                } else {
+                    s.warn("")
+                };
+                out.push_str(&format!("  {} {}\n\n", icon, f.message));
+            }
+        }
+
+        Ok(out)
     } else {
         let finding_json: Vec<_> = findings
             .iter()
