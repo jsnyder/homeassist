@@ -19,7 +19,10 @@ impl OutputMode {
         }
     }
 
-    /// Auto-detect compact mode when running inside an LLM agent
+    /// Auto-detect output mode based on context:
+    /// - LLM agent (CLAUDECODE=1) → Compact
+    /// - Interactive terminal → Human
+    /// - Piped/scripted → JSON
     pub fn auto_detect(human: bool, compact: bool, no_compact: bool) -> Self {
         if human {
             return OutputMode::Human;
@@ -30,7 +33,12 @@ impl OutputMode {
         if compact || std::env::var("CLAUDECODE").as_deref() == Ok("1") {
             return OutputMode::Compact;
         }
-        OutputMode::Json
+        // Default to human when stdout is a terminal, JSON when piped
+        if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+            OutputMode::Human
+        } else {
+            OutputMode::Json
+        }
     }
 }
 
