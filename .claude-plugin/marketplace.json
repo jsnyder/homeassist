@@ -1,0 +1,18 @@
+{
+  "name": "homeassist-marketplace",
+  "description": "Home Assistant CLI tools for AI agents",
+  "owner": {
+    "name": "Jesse Snyder"
+  },
+  "plugins": [
+    {
+      "name": "homeassist",
+      "description": "Token-efficient Home Assistant CLI — entity control, services, logs, deployment validation",
+      "version": "0.3.0",
+      "source": "./",
+      "author": {
+        "name": "Jesse Snyder"
+      }
+    }
+  ]
+}

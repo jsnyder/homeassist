@@ -1,81 +1,81 @@
 ---
 name: homeassist
-description: Use when querying or controlling Home Assistant entities, services, or templates via the homeassist CLI
+description: Use when querying or controlling Home Assistant — entities, services, templates, logs, automations, system health. Also for pre-deploy YAML validation and post-deploy verification.
 ---
 
 # homeassist CLI
 
-Token-optimized Rust CLI for Home Assistant. Outputs JSON by default, compact TSV when `CLAUDECODE=1` is set or `--compact` flag is passed.
+Compiled Rust CLI for Home Assistant. Auto-detects Claude Code for compact output; interactive terminals get styled human output.
 
-## Quick Reference
+## Entity Operations
 
-| Task | Command |
-|------|---------|
-| Connection check | `homeassist health` |
-| List by domain | `homeassist entities list --domain sensor` |
-| Regex filter | `homeassist entities list --pattern "hvac.*power"` |
-| Name filter | `homeassist entities list --name "kitchen"` |
-| Search id + name | `homeassist entities search "kitchen"` |
-| Full entity state | `homeassist entities get sensor.kitchen_temperature` |
-| All service domains | `homeassist services list` |
-| Domain services | `homeassist services list climate` |
-| Call service | `homeassist services call light.turn_on --data '{"entity_id":"light.kitchen"}'` |
-| Call with target | `homeassist services call light.turn_on --target '{"area_id":"kitchen"}'` |
-| Render template | `homeassist templates render "{{ states('sensor.temp') }}"` |
-| State history | `homeassist history get sensor.temp --hours 24` |
-| Error log | `homeassist logs errors --tail 50 --pattern "zigbee"` |
-| Event timeline | `homeassist logbook get light.kitchen --hours 12` |
-| Fire event | `homeassist events fire custom_event --data '{"key":"value"}'` |
-| List automations | `homeassist automations list` |
-| Trigger automation | `homeassist automations trigger automation.my_auto` |
-| List scripts | `homeassist scripts list` |
-| Run script | `homeassist scripts run script.my_script` |
-| Validate config | `homeassist config check` |
-| Reload component | `homeassist config reload automations` |
+```bash
+homeassist entities list --domain light              # By domain
+homeassist entities list --state unavailable          # Exact state match
+homeassist entities list --pattern "hvac.*power"     # Regex on id/name
+homeassist entities list --name "kitchen"            # Friendly name regex
+homeassist entities list --domain sensor --state on  # Combine filters
+homeassist entities get sensor.kitchen_temperature   # Single entity detail
+homeassist entities search "fountain"                # Search id + friendly_name
+```
+
+## Services
+
+```bash
+homeassist services list climate                     # Domain signatures
+homeassist services call light.turn_on --data '{"entity_id":"light.kitchen"}'
+homeassist services call light.turn_on --target '{"area_id":"kitchen"}'
+```
+
+## System Monitoring
+
+```bash
+homeassist health                          # Connection + version
+homeassist inspect                         # Unavailable/unknown audit, domain summary
+homeassist logs errors --tail 10           # System log via WebSocket (all installs)
+homeassist logs errors --pattern "zigbee"  # Filter by regex
+homeassist diff --since 1                  # State changes in last hour
+homeassist watch sensor.temp --timeout 60 --state 72  # Wait for state
+```
+
+## Config & Automation
+
+```bash
+homeassist config check                    # Validate HA config
+homeassist config reload all               # Reload automations/scripts/scenes
+homeassist automations list                # List with on/off status
+homeassist automations trigger <id>
+homeassist templates render "{{ states('sensor.temp') }}"
+```
+
+## Deployment
+
+```bash
+homeassist validate ./packages --check-entities || exit 1  # Pre-deploy
+homeassist verify --baseline snapshot.json                  # Post-deploy
+```
 
 ## Output Modes
 
-Three output modes selected by flags:
+Auto-detected: human (terminal), compact (Claude Code), JSON (piped).
+Override: `--human`, `--compact`, `--no-compact`.
 
-- **JSON** (default): `--human` off, `--compact` off. Pretty-printed JSON.
-- **Compact**: `--compact` or auto-enabled when `CLAUDECODE=1`. Minimal output optimized for token savings.
-- **Human**: `--human` / `-H`. Key-value pairs, readable in terminal.
+| Command | Compact format | Savings |
+|---------|---------------|---------|
+| `entities list/search` | TSV: `entity_id\tstate` | ~67% |
+| `entities get` | Single-line JSON, no context | ~45% |
+| `services list <domain>` | `domain.svc(params)` | ~99% |
 
-Override auto-compact with `--no-compact`.
+## Filter Strategy
 
-### Compact Format Details
+1. **Domain known?** `--domain sensor`
+2. **State known?** `--state unavailable` (exact, not substring)
+3. **Keyword?** `search "fountain"`
+4. **Regex?** `--pattern "hvac.*power"`
+5. **Exact entity?** `get sensor.xyz`
 
-| Command | Compact format | Token savings |
-|---------|---------------|--------------|
-| `entities list/search` | TSV: `entity_id\tstate` per line | ~67% |
-| `entities get` | Single-line JSON, no context/timestamps | ~45% |
-| `services list <domain>` | `domain.svc(param1, param2)` per line | ~99% |
-| `history get` (numeric) | `min=X\tmax=X\tavg=X\tsamples=N` | ~90% |
-| `logs errors` | Plain text lines | ~80% |
+## Pitfalls
 
-## Decision Tree: Finding Entities
-
-```
-Do you know the domain? (sensor, light, climate, etc.)
-├── Yes → homeassist entities list --domain <domain>
-└── No
-    ├── Have a keyword? → homeassist entities search "<keyword>"
-    ├── Need regex? → homeassist entities list --pattern "<regex>"
-    └── Know exact ID? → homeassist entities get <entity_id>
-```
-
-## Auth
-
-Resolved in precedence order:
-1. `--url` / `--token` flags
-2. `HA_URL` / `HA_TOKEN` environment variables
-3. `~/.ha_url` / `~/.ha_token` files (must be `chmod 600`)
-
-## Common Mistakes
-
-| Mistake | Better approach |
-|---------|---------------|
-| `search` when domain is known | `list --domain X` is faster and more precise |
-| Forgetting `--no-compact` | Use it when you need attribute values from a list |
-| `services list` without domain | Returns only domain names, not service signatures |
-| `history get` without `--hours` | Defaults to 24h — specify a smaller window for less data |
+- `--pattern unavailable` matches "available" — use `--state unavailable`
+- `services list` without domain gives domain names only, not signatures
+- Need attributes in list? Add `--no-compact`

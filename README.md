@@ -8,11 +8,33 @@ and interactive terminal use (styled human output with spinners, colors, and ali
 
 ## Install
 
+### Standalone CLI
+
+```bash
+cargo install --git https://github.com/jsnyder/homeassist
+```
+
+Or from a local checkout:
+
 ```bash
 cargo install --path .
 ```
 
 Requires Rust 1.85+.
+
+### Claude Code Plugin
+
+Install as a Claude Code plugin to get skills (contextual guidance for AI agents)
+alongside the CLI:
+
+```bash
+/plugin marketplace add jsnyder/homeassist
+/plugin install homeassist@homeassist-marketplace
+```
+
+The plugin provides two skills:
+- **homeassist** — entity queries, services, logs, system health
+- **ha-deploy** — pre-deploy validation and post-deploy verification workflow
 
 ## Authentication
 
