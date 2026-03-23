@@ -20,6 +20,8 @@ pub async fn run(
     client: Option<&HaClient>,
     path: &str,
     check_entities: bool,
+    check_registry: bool,
+    auth: Option<&crate::auth::AuthConfig>,
     mode: OutputMode,
 ) -> Result<String, AppError> {
     let path = Path::new(path);
@@ -74,6 +76,13 @@ pub async fn run(
     if check_entities
         && let Some(client) = client {
             check_entity_references(client, &yaml_files, &mut findings).await;
+        }
+
+    // Entity registry orphan check via WebSocket
+    if check_registry
+        && let Some(auth) = auth
+        && let Some(client) = client {
+            check_entity_registry(client, &auth.url, &auth.token, &mut findings).await;
         }
 
     let errors = findings.iter().filter(|f| f.severity == "error").count();
@@ -707,6 +716,46 @@ fn find_orphaned_registry_entries(
         })
         .cloned()
         .collect()
+}
+
+async fn check_entity_registry(
+    client: &HaClient,
+    base_url: &str,
+    token: &str,
+    findings: &mut Vec<Finding>,
+) {
+    // Get registry via WebSocket
+    let mut ws = match crate::ws::HaWebSocket::connect(base_url, token).await {
+        Ok(ws) => ws,
+        Err(_) => return, // Can't connect, skip silently
+    };
+
+    let registry_result = ws.command("config/entity_registry/list").await;
+    let _ = ws.close().await;
+
+    let registry: Vec<serde_json::Value> = match registry_result {
+        Ok(val) => val.as_array().cloned().unwrap_or_default(),
+        Err(_) => return,
+    };
+
+    // Get states via REST
+    let states = match client.get_states().await {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+
+    let orphaned = find_orphaned_registry_entries(&registry, &states);
+    for entry in &orphaned {
+        let eid = entry.get("entity_id").and_then(|v| v.as_str()).unwrap_or("?");
+        let platform = entry.get("platform").and_then(|v| v.as_str()).unwrap_or("unknown");
+        findings.push(Finding {
+            file: "(entity_registry)".to_string(),
+            line: None,
+            severity: "warning",
+            check: "orphaned_entity",
+            message: format!("Entity '{eid}' (platform: {platform}) in registry but has no state"),
+        });
+    }
 }
 
 #[cfg(test)]

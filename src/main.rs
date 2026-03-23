@@ -133,6 +133,9 @@ enum Commands {
         /// Check entity references against live HA
         #[arg(long)]
         check_entities: bool,
+        /// Check entity registry for orphaned entries (requires WebSocket)
+        #[arg(long)]
+        check_registry: bool,
     },
     /// Post-deploy verification: health, entity counts, config validity
     Verify {
@@ -321,16 +324,18 @@ async fn run(cli: Cli, mode: OutputMode) -> Result<(), AppError> {
         Commands::Validate {
             path,
             check_entities,
+            check_registry,
         } => {
-            // Validate can run without auth (local files only)
-            let client = if *check_entities {
-                let auth = auth::resolve_auth(cli.url.as_deref(), cli.token.as_deref())?;
-                Some(client::HaClient::new(&auth)?)
+            // Validate can run without auth (local files only), but entity/registry checks need it
+            let needs_auth = *check_entities || *check_registry;
+            let auth = if needs_auth {
+                Some(auth::resolve_auth(cli.url.as_deref(), cli.token.as_deref())?)
             } else {
                 None
             };
+            let client = auth.as_ref().map(|a| client::HaClient::new(a)).transpose()?;
             let output =
-                commands::validate::run(client.as_ref(), path, *check_entities, mode).await?;
+                commands::validate::run(client.as_ref(), path, *check_entities, *check_registry, auth.as_ref(), mode).await?;
             if !output.is_empty() {
                 println!("{output}");
             }
