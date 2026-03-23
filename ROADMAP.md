@@ -214,15 +214,23 @@ check_circular_refs = true        # detect template circular references
 3. **Phase 5c**: Docker and local transports
 4. **Phase 5d**: Issue tracking (baseline comparisons over time)
 
-### Phase 5a: Deployment Validation (Tier 1)
-- `validate` command — YAML syntax, automation structure, Jinja balance, duplicates,
-  sensor platforms, common errors, cruft detection, entity reference checks
+### Phase 5a: Deployment Validation (Tier 1) — Complete
+- `validate` command — YAML syntax, Jinja balance, duplicate keys/entities,
+  common errors, cruft detection, entity reference checks (`--check-entities`)
 - `verify` command — config validity, entity/automation audit, baseline delta
 - 40-170x faster than equivalent bash script validation
 - See [docs/deployment-validation.md](docs/deployment-validation.md)
 
-### WebSocket Support
+### WebSocket Support — Complete
 - `tokio-tungstenite` client with HA auth handshake, 30s timeouts, resource cleanup
 - `system_log/list` for universal log access (fixes HAOS REST 404)
 - 10 tests using real local WebSocket servers (no mocks)
 - Unlocks traces, repairs, areas, devices, labels (all WS-only APIs)
+
+### Phase 5a.1: Validation Parity with deploy-unified.sh — Complete
+- Package exclusion check (blocked top-level keys in package files)
+- Sensor platform validation (missing `platform:` key)
+- Automation syntax check (trigger/action/alias, blueprint-aware)
+- Circular reference detection (template sensor self-references)
+- Entity registry orphan detection (pure function; WebSocket wiring TBD)
+- 125 tests, 0 false positives against 157-file production config

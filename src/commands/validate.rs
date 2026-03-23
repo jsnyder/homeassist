@@ -507,7 +507,7 @@ fn check_package_exclusions(file: &str, content: &str, findings: &mut Vec<Findin
     }
 
     const BLOCKED_KEYS: &[&str] = &[
-        "homeassistant", "default_config", "frontend", "http",
+        "default_config", "frontend", "http",
         "recorder", "logger", "history", "logbook",
     ];
 
@@ -549,6 +549,11 @@ fn check_automation_syntax(file: &str, content: &str, findings: &mut Vec<Finding
         };
 
         let has = |key: &str| map.contains_key(&serde_yaml::Value::String(key.to_string()));
+
+        // Blueprint-based automations inherit trigger/action from the blueprint
+        if has("use_blueprint") {
+            continue;
+        }
 
         let alias = map
             .get(&serde_yaml::Value::String("alias".to_string()))
@@ -640,7 +645,9 @@ fn detect_circular_references(file: &str, content: &str, findings: &mut Vec<Find
                 };
 
                 // Check state, icon, availability fields
-                for field in &["state", "icon", "availability"] {
+                // icon is excluded: icon templates commonly reference their own state
+                // to pick different icons, which is intentional and not circular
+                for field in &["state", "availability"] {
                     if let Some(val) = sensor_map
                         .get(&serde_yaml::Value::String(field.to_string()))
                         .and_then(|v| v.as_str())
@@ -801,9 +808,9 @@ mod tests {
     }
 
     #[test]
-    fn package_exclusion_blocks_homeassistant_key() {
+    fn package_exclusion_blocks_default_config_key() {
         let mut findings = Vec::new();
-        let content = "homeassistant:\n  name: My Home\nsensor:\n  - platform: template\n";
+        let content = "default_config:\nsensor:\n  - platform: template\n";
         check_package_exclusions("packages/bad.yaml", content, &mut findings);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].severity, "error");
@@ -829,7 +836,7 @@ mod tests {
     #[test]
     fn package_exclusion_skips_non_package_files() {
         let mut findings = Vec::new();
-        let content = "homeassistant:\n  name: My Home\n";
+        let content = "recorder:\n  purge_keep_days: 5\n";
         check_package_exclusions("configuration.yaml", content, &mut findings);
         assert!(findings.is_empty());
     }
@@ -933,6 +940,22 @@ mod tests {
         let mut findings = Vec::new();
         let content = "automation: !include automations.yaml\n";
         check_automation_syntax("test.yaml", content, &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn automation_blueprint_skipped() {
+        let mut findings = Vec::new();
+        let content = "automation:\n  - alias: Blueprint Auto\n    use_blueprint:\n      path: my_blueprint.yaml\n      input:\n        some_input: value\n";
+        check_automation_syntax("test.yaml", content, &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn package_exclusion_allows_homeassistant_key() {
+        let mut findings = Vec::new();
+        let content = "homeassistant:\n  customize:\n    sensor.temp:\n      friendly_name: Temperature\n";
+        check_package_exclusions("packages/customize.yaml", content, &mut findings);
         assert!(findings.is_empty());
     }
 
