@@ -694,6 +694,32 @@ fn contains_self_reference(template: &str, entity_id: &str) -> bool {
     re.is_match(template)
 }
 
+fn find_orphaned_registry_entries(
+    registry: &[serde_json::Value],
+    states: &[serde_json::Value],
+) -> Vec<serde_json::Value> {
+    let state_ids: std::collections::HashSet<&str> = states
+        .iter()
+        .filter_map(|s| s.get("entity_id").and_then(|v| v.as_str()))
+        .collect();
+
+    registry
+        .iter()
+        .filter(|entry| {
+            let eid = entry
+                .get("entity_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let disabled = entry
+                .get("disabled_by")
+                .and_then(|v| v.as_str())
+                .is_some();
+            !eid.is_empty() && !disabled && !state_ids.contains(eid)
+        })
+        .cloned()
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -975,5 +1001,44 @@ mod tests {
         let content = "sensor:\n  - platform: template\n    sensors:\n      test:\n        value_template: '{{ 1 }}'\n";
         detect_circular_references("test.yaml", content, &mut findings);
         assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn entity_registry_detects_orphaned_entries() {
+        let registry = vec![
+            json!({"entity_id": "sensor.temp", "platform": "template"}),
+            json!({"entity_id": "sensor.deleted", "platform": "mqtt"}),
+        ];
+        let states = vec![
+            json!({"entity_id": "sensor.temp", "state": "72"}),
+        ];
+        let orphaned = find_orphaned_registry_entries(&registry, &states);
+        assert_eq!(orphaned.len(), 1);
+        assert_eq!(orphaned[0]["entity_id"], "sensor.deleted");
+    }
+
+    #[test]
+    fn entity_registry_ignores_disabled_entries() {
+        let registry = vec![
+            json!({"entity_id": "sensor.temp", "platform": "template"}),
+            json!({"entity_id": "sensor.disabled", "platform": "mqtt", "disabled_by": "user"}),
+        ];
+        let states = vec![
+            json!({"entity_id": "sensor.temp", "state": "72"}),
+        ];
+        let orphaned = find_orphaned_registry_entries(&registry, &states);
+        assert!(orphaned.is_empty());
+    }
+
+    #[test]
+    fn entity_registry_no_orphans_clean() {
+        let registry = vec![
+            json!({"entity_id": "sensor.temp", "platform": "template"}),
+        ];
+        let states = vec![
+            json!({"entity_id": "sensor.temp", "state": "72"}),
+        ];
+        let orphaned = find_orphaned_registry_entries(&registry, &states);
+        assert!(orphaned.is_empty());
     }
 }
