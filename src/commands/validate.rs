@@ -424,13 +424,130 @@ fn check_duplicate_entities_across_files(yaml_files: &[String], findings: &mut V
     }
 }
 
+/// Entity ID pattern: domain.object_id (e.g., sensor.kitchen_temp)
+const ENTITY_ID_PATTERN: &str = r"[a-z_]+\.[a-z0-9_]+";
+
+/// Extract entity references from Jinja template expressions in file content.
+/// Handles: states(), state_attr(), is_state(), is_state_attr(), states['x'], states["x"]
+/// Supports both single and double quotes, optional whitespace.
+fn extract_jinja_entity_refs(
+    file: &str,
+    content: &str,
+) -> HashMap<String, (String, usize)> {
+    let patterns = [
+        // states('entity') / states("entity") with optional whitespace
+        format!(r#"states\(\s*['"]({ENTITY_ID_PATTERN})['"]\s*\)"#),
+        // state_attr('entity', ...) / state_attr("entity", ...)
+        format!(r#"state_attr\(\s*['"]({ENTITY_ID_PATTERN})['"]"#),
+        // is_state('entity', ...) / is_state("entity", ...)
+        format!(r#"is_state\(\s*['"]({ENTITY_ID_PATTERN})['"]"#),
+        // is_state_attr('entity', ...)
+        format!(r#"is_state_attr\(\s*['"]({ENTITY_ID_PATTERN})['"]"#),
+        // states['entity'] / states["entity"] (dict-style access)
+        format!(r#"states\[['"]({ENTITY_ID_PATTERN})['"]\]"#),
+    ];
+
+    let regexes: Vec<Regex> = patterns
+        .iter()
+        .map(|p| Regex::new(p).expect("valid regex"))
+        .collect();
+
+    let mut refs: HashMap<String, (String, usize)> = HashMap::new();
+
+    for (line_num, line) in content.lines().enumerate() {
+        for re in &regexes {
+            for cap in re.captures_iter(line) {
+                let entity_id = cap.get(1).unwrap().as_str().to_string();
+                refs.entry(entity_id)
+                    .or_insert((file.to_string(), line_num + 1));
+            }
+        }
+    }
+
+    refs
+}
+
+/// Extract entity references from YAML entity_id fields via regex with context.
+/// Matches: entity_id: sensor.x, entity_id: "sensor.x", entity_id: 'sensor.x'
+/// Also matches list items under entity_id: blocks (tracks indentation context).
+fn extract_yaml_entity_id_refs(
+    file: &str,
+    content: &str,
+) -> HashMap<String, (String, usize)> {
+    let entity_re = Regex::new(&format!(
+        r"({ENTITY_ID_PATTERN})"
+    )).expect("valid regex");
+
+    // Inline entity_id: value (with optional quotes, trailing comments)
+    let inline_re = Regex::new(&format!(
+        r#"entity_id:\s*['"]?({ENTITY_ID_PATTERN})['"]?\s*(?:#.*)?$"#
+    )).expect("valid regex");
+
+    let mut refs: HashMap<String, (String, usize)> = HashMap::new();
+
+    // State machine: track when we're inside an entity_id: list block
+    let mut in_entity_id_list = false;
+    let mut list_indent: usize = 0;
+
+    for (line_num, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+
+        // Skip template expressions in YAML values
+        if trimmed.contains("{{") || trimmed.contains("{%") {
+            in_entity_id_list = false;
+            continue;
+        }
+
+        // Check for inline entity_id: value
+        if let Some(cap) = inline_re.captures(line) {
+            let entity_id = cap.get(1).unwrap().as_str().to_string();
+            refs.entry(entity_id)
+                .or_insert((file.to_string(), line_num + 1));
+            in_entity_id_list = false;
+            continue;
+        }
+
+        // Check for entity_id: (start of list block)
+        if trimmed == "entity_id:" {
+            in_entity_id_list = true;
+            // Record indentation of the entity_id key
+            list_indent = line.len() - line.trim_start().len();
+            continue;
+        }
+
+        // If in entity_id list block, match list items
+        if in_entity_id_list {
+            let current_indent = line.len() - line.trim_start().len();
+            // End of block: indentation decreased or same as entity_id key
+            if !trimmed.is_empty() && current_indent <= list_indent {
+                in_entity_id_list = false;
+            } else if trimmed.starts_with('-') {
+                // Extract entity from list item: "- sensor.temp" or "- 'sensor.temp'"
+                let item = trimmed.trim_start_matches('-').trim();
+                let item = item.trim_matches('\'').trim_matches('"');
+                let item = item.split('#').next().unwrap_or(item).trim(); // strip comments
+                if let Some(cap) = entity_re.captures(item) {
+                    let candidate = cap.get(1).unwrap().as_str();
+                    // Validate it looks like an entity (has exactly one dot, reasonable domain)
+                    if candidate.matches('.').count() == 1
+                        && candidate.len() > 3
+                    {
+                        refs.entry(candidate.to_string())
+                            .or_insert((file.to_string(), line_num + 1));
+                    }
+                }
+            }
+        }
+    }
+
+    refs
+}
+
 async fn check_entity_references(
     client: &HaClient,
     yaml_files: &[String],
     findings: &mut Vec<Finding>,
 ) {
-    // Extract entity references from states('...') calls
-    let states_re = Regex::new(r"states\('([a-z_]+\.[a-z0-9_]+)'\)").expect("valid regex");
     let mut referenced: HashMap<String, (String, usize)> = HashMap::new();
 
     for file in yaml_files {
@@ -439,13 +556,14 @@ async fn check_entity_references(
             Err(_) => continue,
         };
 
-        for (line_num, line) in content.lines().enumerate() {
-            for cap in states_re.captures_iter(line) {
-                let entity_id = cap.get(1).unwrap().as_str().to_string();
-                referenced
-                    .entry(entity_id)
-                    .or_insert((file.clone(), line_num + 1));
-            }
+        // Extract from Jinja templates (states, is_state, etc.)
+        for (entity_id, loc) in extract_jinja_entity_refs(file, &content) {
+            referenced.entry(entity_id).or_insert(loc);
+        }
+
+        // Extract from YAML entity_id fields
+        for (entity_id, loc) in extract_yaml_entity_id_refs(file, &content) {
+            referenced.entry(entity_id).or_insert(loc);
         }
     }
 
@@ -1095,5 +1213,170 @@ mod tests {
         ];
         let orphaned = find_orphaned_registry_entries(&registry, &states);
         assert!(orphaned.is_empty());
+    }
+
+    // --- Jinja entity reference extraction tests ---
+
+    #[test]
+    fn jinja_ref_extracts_states_single_quote() {
+        let refs = extract_jinja_entity_refs("test.yaml", "{{ states('sensor.temp') }}");
+        assert!(refs.contains_key("sensor.temp"));
+    }
+
+    #[test]
+    fn jinja_ref_extracts_states_double_quote() {
+        let refs = extract_jinja_entity_refs("test.yaml", "{{ states(\"sensor.temp\") }}");
+        assert!(refs.contains_key("sensor.temp"));
+    }
+
+    #[test]
+    fn jinja_ref_extracts_states_with_whitespace() {
+        let refs = extract_jinja_entity_refs("test.yaml", "{{ states( 'sensor.temp' ) }}");
+        assert!(refs.contains_key("sensor.temp"));
+    }
+
+    #[test]
+    fn jinja_ref_extracts_state_attr() {
+        let refs = extract_jinja_entity_refs("test.yaml", "{{ state_attr('sensor.power', 'watts') }}");
+        assert!(refs.contains_key("sensor.power"));
+    }
+
+    #[test]
+    fn jinja_ref_extracts_state_attr_double_quote() {
+        let refs = extract_jinja_entity_refs("test.yaml", "{{ state_attr(\"climate.lr\", \"hvac_action\") }}");
+        assert!(refs.contains_key("climate.lr"));
+    }
+
+    #[test]
+    fn jinja_ref_extracts_is_state() {
+        let refs = extract_jinja_entity_refs("test.yaml", "{{ is_state('binary_sensor.door', 'on') }}");
+        assert!(refs.contains_key("binary_sensor.door"));
+    }
+
+    #[test]
+    fn jinja_ref_extracts_is_state_attr() {
+        let refs = extract_jinja_entity_refs("test.yaml", "{{ is_state_attr('climate.living_room', 'hvac_action', 'heating') }}");
+        assert!(refs.contains_key("climate.living_room"));
+    }
+
+    #[test]
+    fn jinja_ref_extracts_dict_access_single_quote() {
+        let refs = extract_jinja_entity_refs("test.yaml", "{{ states['sensor.temp'].state }}");
+        assert!(refs.contains_key("sensor.temp"));
+    }
+
+    #[test]
+    fn jinja_ref_extracts_dict_access_double_quote() {
+        let refs = extract_jinja_entity_refs("test.yaml", "{{ states[\"sensor.temp\"] }}");
+        assert!(refs.contains_key("sensor.temp"));
+    }
+
+    #[test]
+    fn jinja_ref_extracts_multiple_on_one_line() {
+        let refs = extract_jinja_entity_refs("test.yaml",
+            "{{ states('sensor.a') + states('sensor.b') }}");
+        assert!(refs.contains_key("sensor.a"));
+        assert!(refs.contains_key("sensor.b"));
+    }
+
+    #[test]
+    fn jinja_ref_multiline_template() {
+        let content = "state: >\n  {{ is_state('light.kitchen', 'on') or\n     is_state('light.living', 'on') }}\n";
+        let refs = extract_jinja_entity_refs("test.yaml", content);
+        assert!(refs.contains_key("light.kitchen"));
+        assert!(refs.contains_key("light.living"));
+    }
+
+    #[test]
+    fn jinja_ref_no_match_on_plain_text() {
+        let refs = extract_jinja_entity_refs("test.yaml", "name: My Sensor\nicon: mdi:thermometer\n");
+        assert!(refs.is_empty());
+    }
+
+    // --- YAML entity_id field extraction tests ---
+
+    #[test]
+    fn yaml_ref_extracts_inline_entity_id() {
+        let refs = extract_yaml_entity_id_refs("test.yaml", "  entity_id: light.kitchen\n");
+        assert!(refs.contains_key("light.kitchen"));
+    }
+
+    #[test]
+    fn yaml_ref_extracts_quoted_entity_id() {
+        let refs = extract_yaml_entity_id_refs("test.yaml", "  entity_id: \"light.kitchen\"\n");
+        assert!(refs.contains_key("light.kitchen"));
+    }
+
+    #[test]
+    fn yaml_ref_extracts_single_quoted_entity_id() {
+        let refs = extract_yaml_entity_id_refs("test.yaml", "  entity_id: 'light.kitchen'\n");
+        assert!(refs.contains_key("light.kitchen"));
+    }
+
+    #[test]
+    fn yaml_ref_extracts_entity_id_with_comment() {
+        let refs = extract_yaml_entity_id_refs("test.yaml", "  entity_id: sensor.temp  # main sensor\n");
+        assert!(refs.contains_key("sensor.temp"));
+    }
+
+    #[test]
+    fn yaml_ref_extracts_entity_id_list() {
+        let content = "  entity_id:\n    - sensor.temp\n    - sensor.humidity\n";
+        let refs = extract_yaml_entity_id_refs("test.yaml", content);
+        assert!(refs.contains_key("sensor.temp"));
+        assert!(refs.contains_key("sensor.humidity"));
+    }
+
+    #[test]
+    fn yaml_ref_extracts_entity_id_list_with_quotes() {
+        let content = "  entity_id:\n    - 'sensor.temp'\n    - \"binary_sensor.door\"\n";
+        let refs = extract_yaml_entity_id_refs("test.yaml", content);
+        assert!(refs.contains_key("sensor.temp"));
+        assert!(refs.contains_key("binary_sensor.door"));
+    }
+
+    #[test]
+    fn yaml_ref_list_ends_at_dedent() {
+        let content = "  entity_id:\n    - sensor.temp\n  state: 'on'\n";
+        let refs = extract_yaml_entity_id_refs("test.yaml", content);
+        assert!(refs.contains_key("sensor.temp"));
+        assert_eq!(refs.len(), 1); // 'on' should not be captured
+    }
+
+    #[test]
+    fn yaml_ref_skips_template_entity_id() {
+        let content = "  entity_id: \"{{ states('input_select.target') }}\"\n";
+        let refs = extract_yaml_entity_id_refs("test.yaml", content);
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn yaml_ref_no_false_positive_on_non_entity_list() {
+        // This is a list of something else, not under entity_id:
+        let content = "  domains:\n    - light.turn_on\n    - switch.turn_off\n";
+        let refs = extract_yaml_entity_id_refs("test.yaml", content);
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn yaml_ref_condition_state_entity() {
+        let content = "  - condition: state\n    entity_id: binary_sensor.front_door\n    state: 'on'\n";
+        let refs = extract_yaml_entity_id_refs("test.yaml", content);
+        assert!(refs.contains_key("binary_sensor.front_door"));
+    }
+
+    #[test]
+    fn yaml_ref_target_entity_id() {
+        let content = "    target:\n      entity_id: light.living_room\n";
+        let refs = extract_yaml_entity_id_refs("test.yaml", content);
+        assert!(refs.contains_key("light.living_room"));
+    }
+
+    #[test]
+    fn yaml_ref_target_entity_id_list() {
+        let content = "    target:\n      entity_id:\n        - light.living_room\n        - light.bedroom\n";
+        let refs = extract_yaml_entity_id_refs("test.yaml", content);
+        assert!(refs.contains_key("light.living_room"));
+        assert!(refs.contains_key("light.bedroom"));
     }
 }
