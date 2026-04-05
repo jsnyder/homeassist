@@ -158,7 +158,11 @@ enum Commands {
     /// Get server health and connection status
     Health,
     /// System status overview
-    Stats,
+    Stats {
+        /// Path to dashboard YAML config
+        #[arg(long)]
+        dashboard: Option<String>,
+    },
     /// Show LLM-optimized usage documentation
     Usage,
 }
@@ -480,8 +484,8 @@ async fn run(cli: Cli, mode: OutputMode, limit: Option<usize>) -> Result<(), App
         Commands::Health => {
             commands::health::check(&client, &auth_config.url, mode).await?
         }
-        Commands::Stats => {
-            commands::stats::status(&client, &auth_config.url, &auth_config.token, mode).await?
+        Commands::Stats { dashboard } => {
+            commands::stats::status(&client, &auth_config.url, &auth_config.token, dashboard.as_deref(), mode).await?
         }
         Commands::Usage | Commands::Completions { .. } | Commands::Validate { .. } => {
             unreachable!()

@@ -4,6 +4,112 @@ use crate::output::OutputMode;
 use crate::ui;
 use crate::ws::HaWebSocket;
 use serde_json::{json, Value};
+use std::collections::HashMap;
+
+// ── Dashboard config structs ────────────────────────────────────────
+
+#[derive(Debug, serde::Deserialize)]
+struct DashboardConfig {
+    sections: Vec<DashboardSection>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct DashboardSection {
+    name: String,
+    entities: Option<Vec<String>>,
+    templates: Option<Vec<DashboardTemplate>>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct DashboardTemplate {
+    label: String,
+    template: String,
+}
+
+fn load_dashboard_config(path: Option<&str>) -> Option<DashboardConfig> {
+    let candidates = if let Some(p) = path {
+        vec![p.to_string()]
+    } else {
+        let home = std::env::var("HOME").unwrap_or_default();
+        vec![
+            ".homeassist-dashboard.yaml".to_string(),
+            format!("{home}/.config/homeassist/dashboard.yaml"),
+        ]
+    };
+    for candidate in candidates {
+        if let Ok(content) = std::fs::read_to_string(&candidate) {
+            return serde_yaml::from_str(&content).ok();
+        }
+    }
+    None
+}
+
+// ── Section formatting (standalone, testable) ───────────────────────
+
+fn format_section_compact(
+    name: &str,
+    entities: &[(&str, &str, Option<&str>)],
+    templates: &[(&str, &str)],
+) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    parts.push(format!("[{name}]"));
+    for (id, state, unit) in entities {
+        let unit_str = unit.unwrap_or("");
+        parts.push(format!("{id}={state}{unit_str}"));
+    }
+    for (label, value) in templates {
+        let label_clean = label.replace(' ', "_");
+        parts.push(format!("{label_clean}={value}"));
+    }
+    parts.join("\t")
+}
+
+fn format_section_human(
+    name: &str,
+    entities: &[(&str, &str, Option<&str>)],
+    templates: &[(&str, &str)],
+) -> String {
+    let s = ui::Style::detect();
+    let mut out = format!("\n{}\n\n", s.header(name));
+    for (id, state, unit) in entities {
+        let (color, reset) = ui::state_color(state, &s);
+        let unit_str = unit.map(|u| format!("  {}{u}{}", s.dim, s.reset)).unwrap_or_default();
+        out.push_str(&format!(
+            "  {:<35} {color}{:<12}{reset}{unit_str}\n",
+            id, state,
+        ));
+    }
+    for (label, value) in templates {
+        out.push_str(&format!("  {:<35} {}\n", label, value));
+    }
+    out
+}
+
+fn format_section_json(
+    name: &str,
+    entities: &[(&str, &str, Option<&str>)],
+    templates: &[(&str, &str)],
+) -> Value {
+    let entity_arr: Vec<Value> = entities
+        .iter()
+        .map(|(id, state, unit)| {
+            json!({
+                "entity_id": id,
+                "state": state,
+                "unit": unit.unwrap_or(""),
+            })
+        })
+        .collect();
+    let template_arr: Vec<Value> = templates
+        .iter()
+        .map(|(label, value)| json!({ "label": label, "value": value }))
+        .collect();
+    json!({
+        "name": name,
+        "entities": entity_arr,
+        "templates": template_arr,
+    })
+}
 
 #[derive(Debug)]
 struct SystemStats {
@@ -140,6 +246,7 @@ pub async fn status(
     client: &HaClient,
     base_url: &str,
     token: &str,
+    dashboard: Option<&str>,
     mode: OutputMode,
 ) -> Result<String, AppError> {
     let human = mode == OutputMode::Human;
@@ -225,11 +332,112 @@ pub async fn status(
         warning_count,
     };
 
-    match mode {
-        OutputMode::Compact => Ok(format_compact(&stats)),
-        OutputMode::Human => Ok(format_human(&stats)),
-        OutputMode::Json => format_json(&stats),
+    let mut result = match mode {
+        OutputMode::Compact => format_compact(&stats),
+        OutputMode::Human => format_human(&stats),
+        OutputMode::Json => format_json(&stats)?,
+    };
+
+    // Dashboard sections
+    if let Some(config) = load_dashboard_config(dashboard) {
+        // Build entity lookup map
+        let state_map: HashMap<&str, &Value> = states
+            .iter()
+            .filter_map(|e| {
+                let id = e.get("entity_id")?.as_str()?;
+                Some((id, e))
+            })
+            .collect();
+
+        let mut json_sections: Vec<Value> = Vec::new();
+
+        for section in &config.sections {
+            // Resolve entities
+            let resolved_entities: Vec<(&str, String, Option<String>)> = section
+                .entities
+                .as_ref()
+                .map(|ents| {
+                    ents.iter()
+                        .map(|eid| {
+                            if let Some(entity) = state_map.get(eid.as_str()) {
+                                let st = entity
+                                    .get("state")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown")
+                                    .to_string();
+                                let unit = entity
+                                    .get("attributes")
+                                    .and_then(|a| a.get("unit_of_measurement"))
+                                    .and_then(|u| u.as_str())
+                                    .map(|s| s.to_string());
+                                (eid.as_str(), st, unit)
+                            } else {
+                                (eid.as_str(), "not_found".to_string(), None)
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            // Resolve templates in parallel
+            let resolved_templates: Vec<(String, String)> = if let Some(tmpls) = &section.templates
+            {
+                let futs: Vec<_> = tmpls
+                    .iter()
+                    .map(|t| {
+                        let label = t.label.clone();
+                        let tmpl = t.template.clone();
+                        async move {
+                            let val = client
+                                .render_template(&tmpl)
+                                .await
+                                .unwrap_or_else(|e| format!("error: {e}"));
+                            (label, val.trim().to_string())
+                        }
+                    })
+                    .collect();
+                futures_util::future::join_all(futs).await
+            } else {
+                Vec::new()
+            };
+
+            // Convert to borrowed slices for formatting functions
+            let ent_refs: Vec<(&str, &str, Option<&str>)> = resolved_entities
+                .iter()
+                .map(|(id, st, unit)| (*id, st.as_str(), unit.as_deref()))
+                .collect();
+            let tmpl_refs: Vec<(&str, &str)> = resolved_templates
+                .iter()
+                .map(|(l, v)| (l.as_str(), v.as_str()))
+                .collect();
+
+            match mode {
+                OutputMode::Compact => {
+                    result.push('\n');
+                    result.push_str(&format_section_compact(&section.name, &ent_refs, &tmpl_refs));
+                }
+                OutputMode::Human => {
+                    result.push_str(&format_section_human(&section.name, &ent_refs, &tmpl_refs));
+                }
+                OutputMode::Json => {
+                    json_sections.push(format_section_json(
+                        &section.name,
+                        &ent_refs,
+                        &tmpl_refs,
+                    ));
+                }
+            }
+        }
+
+        // For JSON mode, inject sections into the existing JSON object
+        if mode == OutputMode::Json && !json_sections.is_empty() {
+            let mut parsed: Value = serde_json::from_str(&result)?;
+            parsed["sections"] = json!(json_sections);
+            result = serde_json::to_string_pretty(&parsed)?;
+        }
     }
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -294,5 +502,56 @@ mod tests {
         assert_eq!(parsed["total_entities"], 847);
         assert_eq!(parsed["version"], "2024.12.1");
         assert_eq!(parsed["errors"], 12);
+    }
+
+    #[test]
+    fn parse_dashboard_config() {
+        let yaml = r#"
+sections:
+  - name: Climate
+    entities:
+      - climate.thermostat
+      - sensor.outdoor_temperature
+    templates:
+      - label: "Heat index"
+        template: "{{ states('sensor.heat_index') }}"
+  - name: Security
+    entities:
+      - lock.front_door
+"#;
+        let config: DashboardConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.sections.len(), 2);
+        assert_eq!(config.sections[0].name, "Climate");
+        assert_eq!(config.sections[0].entities.as_ref().unwrap().len(), 2);
+        assert_eq!(config.sections[0].templates.as_ref().unwrap().len(), 1);
+        assert!(config.sections[1].templates.is_none());
+    }
+
+    #[test]
+    fn render_section_compact_format() {
+        let entities = vec![
+            ("climate.thermostat", "heat", Some("°F")),
+            ("sensor.outdoor_temp", "85.2", Some("°F")),
+        ];
+        let templates = vec![("Net cooling", "42.1W")];
+        let output = format_section_compact("Climate", &entities, &templates);
+        assert!(output.starts_with("[Climate]"));
+        assert!(output.contains("climate.thermostat=heat°F"));
+        assert!(output.contains("Net_cooling=42.1W"));
+    }
+
+    #[test]
+    fn render_section_human_contains_entities() {
+        let entities = vec![("climate.thermostat", "heat", Some("°F"))];
+        let output = format_section_human("Climate", &entities, &[]);
+        assert!(output.contains("Climate"));
+        assert!(output.contains("climate.thermostat"));
+        assert!(output.contains("heat"));
+    }
+
+    #[test]
+    fn load_dashboard_config_returns_none_for_missing() {
+        let result = load_dashboard_config(Some("/nonexistent/path.yaml"));
+        assert!(result.is_none());
     }
 }
