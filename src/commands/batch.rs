@@ -4,6 +4,14 @@ use crate::output::OutputMode;
 use serde_json::{json, Value};
 use std::io::BufRead;
 
+fn collect_lines<I>(iter: I) -> Result<Vec<String>, AppError>
+where
+    I: Iterator<Item = Result<String, std::io::Error>>,
+{
+    iter.map(|r| r.map_err(|e| AppError::Other(format!("Failed to read input: {e}"))))
+        .collect()
+}
+
 fn parse_batch_command(line: &str) -> Result<(String, Value), AppError> {
     let cmd: Value = serde_json::from_str(line)
         .map_err(|e| AppError::Other(format!("Invalid JSON: {e}")))?;
@@ -37,7 +45,7 @@ pub async fn run(
         content.lines().map(String::from).collect()
     } else {
         let stdin = std::io::stdin();
-        stdin.lock().lines().map_while(Result::ok).collect()
+        collect_lines(stdin.lock().lines())?
     };
 
     let mut results: Vec<Value> = Vec::new();
@@ -163,5 +171,27 @@ mod tests {
     fn parse_batch_command_invalid_json_errors() {
         let err = parse_batch_command("not json").unwrap_err();
         assert!(err.to_string().contains("Invalid JSON"));
+    }
+
+    #[test]
+    fn collect_lines_propagates_errors() {
+        let lines = vec![
+            Ok("line1".to_string()),
+            Ok("line2".to_string()),
+        ];
+        let result = collect_lines(lines.into_iter());
+        assert_eq!(result.unwrap(), vec!["line1", "line2"]);
+    }
+
+    #[test]
+    fn collect_lines_returns_error_on_io_failure() {
+        let lines: Vec<Result<String, std::io::Error>> = vec![
+            Ok("line1".to_string()),
+            Err(std::io::Error::new(std::io::ErrorKind::Other, "read failed")),
+            Ok("line3".to_string()),
+        ];
+        let result = collect_lines(lines.into_iter());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("read failed"));
     }
 }
