@@ -6,6 +6,114 @@ use crate::ws::HaWebSocket;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
+// ── Init config constants ──────────────────────────────────────────
+
+/// Domains to exclude from auto-generated dashboard (noisy/meta).
+const INIT_EXCLUDED_DOMAINS: &[&str] = &[
+    "automation", "script", "scene", "device_tracker", "update",
+    "persistent_notification", "sun", "weather", "zone", "person",
+    "input_boolean", "input_number", "input_text", "input_select",
+    "input_datetime", "input_button", "counter", "timer", "group",
+    "schedule", "tag", "number", "select", "button", "event",
+    "conversation", "stt", "tts", "wake_word", "todo", "image",
+    "calendar", "date", "datetime", "text", "time",
+];
+
+/// Domains shown first in generated config.
+const INIT_PRIORITY_DOMAINS: &[&str] = &[
+    "climate", "light", "switch", "lock", "cover", "fan",
+    "media_player", "camera", "alarm_control_panel",
+    "binary_sensor", "sensor",
+];
+
+// ── Init config generation (pure, testable) ────────────────────────
+
+fn generate_init_config(states: &[Value]) -> String {
+    let mut domain_entities: HashMap<String, Vec<String>> = HashMap::new();
+
+    for entity in states {
+        let entity_id = match entity.get("entity_id").and_then(|v| v.as_str()) {
+            Some(id) => id,
+            None => continue,
+        };
+
+        let domain = match entity_id.split('.').next() {
+            Some(d) => d,
+            None => continue,
+        };
+
+        // Skip excluded domains
+        if INIT_EXCLUDED_DOMAINS.contains(&domain) {
+            continue;
+        }
+
+        // Skip hidden entities
+        if entity
+            .get("attributes")
+            .and_then(|a| a.get("hidden"))
+            .and_then(|h| h.as_bool())
+            == Some(true)
+        {
+            continue;
+        }
+
+        domain_entities
+            .entry(domain.to_string())
+            .or_default()
+            .push(entity_id.to_string());
+    }
+
+    // Sort entity lists within each domain
+    for entities in domain_entities.values_mut() {
+        entities.sort();
+    }
+
+    // Build ordered list of domains: priority first, then remaining alphabetically
+    let mut ordered_domains: Vec<String> = Vec::new();
+    for &pd in INIT_PRIORITY_DOMAINS {
+        if domain_entities.contains_key(pd) {
+            ordered_domains.push(pd.to_string());
+        }
+    }
+    let mut remaining: Vec<String> = domain_entities
+        .keys()
+        .filter(|d| !INIT_PRIORITY_DOMAINS.contains(&d.as_str()))
+        .cloned()
+        .collect();
+    remaining.sort();
+    ordered_domains.extend(remaining);
+
+    // Build YAML output
+    let mut out = String::new();
+    out.push_str("# homeassist dashboard config — generated from Home Assistant state\n");
+    out.push_str("# Edit sections to customize: homeassist stats --dashboard <path>\n");
+    out.push_str("sections:\n");
+
+    for domain in &ordered_domains {
+        let mut chars = domain.chars();
+        let name: String = chars
+            .next()
+            .map(|c| c.to_uppercase().collect::<String>())
+            .unwrap_or_default()
+            + chars.as_str();
+
+        out.push_str(&format!("  - name: {name}\n"));
+        out.push_str("    entities:\n");
+        if let Some(entities) = domain_entities.get(domain) {
+            for eid in entities {
+                out.push_str(&format!("      - {eid}\n"));
+            }
+        }
+    }
+
+    out
+}
+
+pub async fn init(client: &HaClient) -> Result<String, AppError> {
+    let states = client.get_states().await?;
+    Ok(generate_init_config(&states))
+}
+
 // ── Dashboard config structs ────────────────────────────────────────
 
 #[derive(Debug, serde::Deserialize)]
@@ -553,5 +661,57 @@ sections:
     fn load_dashboard_config_returns_none_for_missing() {
         let result = load_dashboard_config(Some("/nonexistent/path.yaml"));
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn generate_init_config_groups_by_domain() {
+        let states = vec![
+            json!({"entity_id": "light.kitchen", "state": "on", "attributes": {"friendly_name": "Kitchen Light"}}),
+            json!({"entity_id": "light.bedroom", "state": "off", "attributes": {"friendly_name": "Bedroom Light"}}),
+            json!({"entity_id": "sensor.temp", "state": "72.5", "attributes": {"unit_of_measurement": "°F"}}),
+            json!({"entity_id": "automation.morning", "state": "on", "attributes": {}}),
+            json!({"entity_id": "update.core", "state": "off", "attributes": {}}),
+        ];
+        let yaml = generate_init_config(&states);
+        assert!(yaml.contains("light.kitchen"));
+        assert!(yaml.contains("light.bedroom"));
+        assert!(yaml.contains("sensor.temp"));
+        assert!(!yaml.contains("automation.morning"));
+        assert!(!yaml.contains("update.core"));
+    }
+
+    #[test]
+    fn generate_init_config_priority_ordering() {
+        let states = vec![
+            json!({"entity_id": "sensor.temp", "state": "72", "attributes": {}}),
+            json!({"entity_id": "climate.hvac", "state": "heat", "attributes": {}}),
+            json!({"entity_id": "light.kitchen", "state": "on", "attributes": {}}),
+        ];
+        let yaml = generate_init_config(&states);
+        let climate_pos = yaml.find("Climate").unwrap();
+        let light_pos = yaml.find("Light").unwrap();
+        let sensor_pos = yaml.find("Sensor").unwrap();
+        // Climate before Light before Sensor (priority order)
+        assert!(climate_pos < light_pos);
+        assert!(light_pos < sensor_pos);
+    }
+
+    #[test]
+    fn generate_init_config_skips_hidden() {
+        let states = vec![
+            json!({"entity_id": "light.visible", "state": "on", "attributes": {}}),
+            json!({"entity_id": "light.hidden", "state": "on", "attributes": {"hidden": true}}),
+        ];
+        let yaml = generate_init_config(&states);
+        assert!(yaml.contains("light.visible"));
+        assert!(!yaml.contains("light.hidden"));
+    }
+
+    #[test]
+    fn generate_init_config_empty_states() {
+        let yaml = generate_init_config(&[]);
+        assert!(yaml.contains("sections:"));
+        // Should still have the header comment
+        assert!(yaml.contains("# homeassist"));
     }
 }

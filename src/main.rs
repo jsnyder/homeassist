@@ -162,6 +162,9 @@ enum Commands {
         /// Path to dashboard YAML config
         #[arg(long)]
         dashboard: Option<String>,
+        /// Generate starter dashboard config from current HA state
+        #[arg(long)]
+        init: bool,
     },
     /// Show LLM-optimized usage documentation
     Usage,
@@ -484,8 +487,12 @@ async fn run(cli: Cli, mode: OutputMode, limit: Option<usize>) -> Result<(), App
         Commands::Health => {
             commands::health::check(&client, &auth_config.url, mode).await?
         }
-        Commands::Stats { dashboard } => {
-            commands::stats::status(&client, &auth_config.url, &auth_config.token, dashboard.as_deref(), mode).await?
+        Commands::Stats { dashboard, init } => {
+            if init {
+                commands::stats::init(&client).await?
+            } else {
+                commands::stats::status(&client, &auth_config.url, &auth_config.token, dashboard.as_deref(), mode).await?
+            }
         }
         Commands::Usage | Commands::Completions { .. } | Commands::Validate { .. } => {
             unreachable!()
@@ -575,6 +582,7 @@ HEALTH:
 
 STATS:
   homeassist stats
+  homeassist stats --init > ~/.config/homeassist/dashboard.yaml
 
 OUTPUT: JSON default, --human for readable, --compact for LLM token savings
 AUTH: HA_URL + HA_TOKEN env vars, or --url/--token flags
