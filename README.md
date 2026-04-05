@@ -84,6 +84,7 @@ homeassist inspect                                   # System health audit
 | `inspect` | Audit system health |
 | `validate [path]` | Validate HA YAML config files (`--check-entities`, `--check-registry`) |
 | `verify` | Post-deploy health verification |
+| `stats` | System status overview (`--dashboard`, `--init`) |
 | `health` | Server connection status |
 | `completions <shell>` | Generate shell completions |
 

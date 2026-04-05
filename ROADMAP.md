@@ -39,6 +39,14 @@
 - Watch (poll entity for state changes with timeout/interval/target)
 - Inspect (system health audit: unavailable/unknown entities, domain summary)
 
+### Phase 6: Status Dashboard & Design System
+- `stats` command — system status overview (version, entities, automations, errors)
+- YAML dashboard config with custom sections and HA template support
+- `--init` flag for auto-generating config from HA domains
+- `--limit` flag for compact-mode list truncation (default 50)
+- `fmt_num_compact()` for token-efficient numeric display (10.3k, 1.2M)
+- `docs/DESIGN.md` output system reference
+
 ## Future: High-Value Features
 
 Prioritized by frequency of manual workarounds observed in past sessions.
