@@ -21,6 +21,7 @@ pub async fn run(
     path: &str,
     check_entities: bool,
     check_registry: bool,
+    check_services: bool,
     auth: Option<&crate::auth::AuthConfig>,
     mode: OutputMode,
 ) -> Result<String, AppError> {
@@ -72,10 +73,19 @@ pub async fn run(
     // Cross-file duplicate entity check
     check_duplicate_entities_across_files(&yaml_files, &mut findings);
 
+    // Cross-file duplicate automation ID check
+    check_duplicate_automation_ids(&yaml_files, &mut findings);
+
     // Entity reference check against live HA (if client provided and flag set)
     if check_entities
         && let Some(client) = client {
             check_entity_references(client, &yaml_files, &mut findings).await;
+        }
+
+    // Service call validation against live HA (if client provided and flag set)
+    if check_services
+        && let Some(client) = client {
+            check_service_references(client, &yaml_files, &mut findings).await;
         }
 
     // Entity registry orphan check via WebSocket
@@ -591,6 +601,175 @@ async fn check_entity_references(
                 severity: "warning",
                 check: "entity_ref",
                 message: format!("Entity '{entity_id}' referenced but not found in HA"),
+            });
+        }
+    }
+}
+
+/// Detect duplicate automation IDs across all YAML files.
+/// HA silently drops/overwrites automations with colliding IDs.
+fn check_duplicate_automation_ids(yaml_files: &[String], findings: &mut Vec<Finding>) {
+    let mut seen_ids: HashMap<String, (String, String)> = HashMap::new(); // id -> (file, alias)
+
+    for file in yaml_files {
+        let content = match std::fs::read_to_string(file) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let yaml = match serde_yaml::from_str::<serde_yaml::Value>(&content) {
+            Ok(y) => y,
+            Err(_) => continue,
+        };
+
+        let automations = match yaml.get("automation") {
+            Some(serde_yaml::Value::Sequence(items)) => items,
+            _ => continue,
+        };
+
+        for item in automations {
+            let map = match item {
+                serde_yaml::Value::Mapping(m) => m,
+                _ => continue,
+            };
+
+            let id = match map.get(&serde_yaml::Value::String("id".to_string())) {
+                Some(serde_yaml::Value::String(s)) => s.clone(),
+                _ => continue,
+            };
+
+            let alias = map
+                .get(&serde_yaml::Value::String("alias".to_string()))
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| "unnamed")
+                .to_string();
+
+            if let Some((prev_file, prev_alias)) = seen_ids.get(&id) {
+                findings.push(Finding {
+                    file: file.to_string(),
+                    line: None,
+                    severity: "error",
+                    check: "duplicate_automation_id",
+                    message: format!(
+                        "Automation id '{id}' ('{alias}') duplicates id in {prev_file} ('{prev_alias}')",
+                        prev_file = crate::ui::basename(prev_file),
+                    ),
+                });
+            } else {
+                seen_ids.insert(id, (file.clone(), alias));
+            }
+        }
+    }
+}
+
+/// Extract service/action references from file content.
+/// Returns HashMap of "domain.service" -> (file, line).
+/// Skips script.* (entity calls), template expressions, and multiline scalars.
+fn extract_service_references(
+    file: &str,
+    content: &str,
+) -> HashMap<String, (String, usize)> {
+    let service_re = Regex::new(&format!(
+        r#"(?:service|action):\s*['"]?({ENTITY_ID_PATTERN})['"]?\s*(?:#.*)?$"#
+    )).expect("valid regex");
+
+    let mut refs: HashMap<String, (String, usize)> = HashMap::new();
+    let mut skip_multiline = false;
+    let mut multiline_indent: usize = 0;
+
+    for (line_num, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+
+        // Handle multiline scalar continuation
+        if skip_multiline {
+            let current_indent = line.len() - line.trim_start().len();
+            if !trimmed.is_empty() && current_indent <= multiline_indent {
+                skip_multiline = false;
+            } else {
+                continue;
+            }
+        }
+
+        // Skip lines with template expressions
+        if trimmed.contains("{{") || trimmed.contains("{%") {
+            continue;
+        }
+
+        // Detect multiline scalar indicators (service: > or service: |)
+        if (trimmed.starts_with("service:") || trimmed.starts_with("action:"))
+            && (trimmed.ends_with('>') || trimmed.ends_with('|')
+                || trimmed.ends_with(">-") || trimmed.ends_with("|-"))
+        {
+            skip_multiline = true;
+            multiline_indent = line.len() - line.trim_start().len();
+            continue;
+        }
+
+        if let Some(cap) = service_re.captures(line) {
+            let svc = cap.get(1).unwrap().as_str().to_string();
+            let domain = svc.split('.').next().unwrap_or("");
+            // Skip script.* — those are entity-based calls, not domain services
+            if domain == "script" {
+                continue;
+            }
+            refs.entry(svc)
+                .or_insert((file.to_string(), line_num + 1));
+        }
+    }
+
+    refs
+}
+
+/// Validate service references against live HA service registry.
+async fn check_service_references(
+    client: &HaClient,
+    yaml_files: &[String],
+    findings: &mut Vec<Finding>,
+) {
+    let mut all_refs: HashMap<String, (String, usize)> = HashMap::new();
+
+    for file in yaml_files {
+        let content = match std::fs::read_to_string(file) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        for (svc, loc) in extract_service_references(file, &content) {
+            all_refs.entry(svc).or_insert(loc);
+        }
+    }
+
+    if all_refs.is_empty() {
+        return;
+    }
+
+    // Get all services from HA
+    let ha_services = match client.get_services().await {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+
+    // Build set of "domain.service" from HA response
+    let mut available: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for domain_entry in &ha_services {
+        let domain = match domain_entry.get("domain").and_then(|d| d.as_str()) {
+            Some(d) => d,
+            None => continue,
+        };
+        if let Some(services) = domain_entry.get("services").and_then(|s| s.as_object()) {
+            for svc_name in services.keys() {
+                available.insert(format!("{domain}.{svc_name}"));
+            }
+        }
+    }
+
+    for (svc, (file, line)) in &all_refs {
+        if !available.contains(svc) {
+            findings.push(Finding {
+                file: file.clone(),
+                line: Some(*line),
+                severity: "warning",
+                check: "service_ref",
+                message: format!("Service '{svc}' not found in HA"),
             });
         }
     }
@@ -1378,5 +1557,150 @@ mod tests {
         let refs = extract_yaml_entity_id_refs("test.yaml", content);
         assert!(refs.contains_key("light.living_room"));
         assert!(refs.contains_key("light.bedroom"));
+    }
+
+    // --- Duplicate automation ID tests ---
+
+    fn write_temp_yaml(dir: &std::path::Path, name: &str, content: &str) -> String {
+        let path = dir.join(name);
+        std::fs::write(&path, content).unwrap();
+        path.to_string_lossy().to_string()
+    }
+
+    #[test]
+    fn duplicate_automation_id_detected() {
+        let dir = tempfile::tempdir().unwrap();
+        let f1 = write_temp_yaml(dir.path(), "hvac.yaml",
+            "automation:\n  - id: daily_check\n    alias: HVAC Check\n    trigger:\n      - platform: time\n    action:\n      - service: notify.notify\n");
+        let f2 = write_temp_yaml(dir.path(), "lights.yaml",
+            "automation:\n  - id: daily_check\n    alias: Light Check\n    trigger:\n      - platform: time\n    action:\n      - service: notify.notify\n");
+        let files = vec![f1, f2];
+        let mut findings = Vec::new();
+        check_duplicate_automation_ids(&files, &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, "error");
+        assert_eq!(findings[0].check, "duplicate_automation_id");
+        assert!(findings[0].message.contains("daily_check"));
+    }
+
+    #[test]
+    fn unique_automation_ids_clean() {
+        let dir = tempfile::tempdir().unwrap();
+        let f1 = write_temp_yaml(dir.path(), "hvac.yaml",
+            "automation:\n  - id: hvac_check\n    alias: HVAC\n    trigger:\n      - platform: time\n    action:\n      - service: notify.notify\n");
+        let f2 = write_temp_yaml(dir.path(), "lights.yaml",
+            "automation:\n  - id: light_check\n    alias: Lights\n    trigger:\n      - platform: time\n    action:\n      - service: notify.notify\n");
+        let files = vec![f1, f2];
+        let mut findings = Vec::new();
+        check_duplicate_automation_ids(&files, &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn automation_without_id_not_flagged_as_duplicate() {
+        let dir = tempfile::tempdir().unwrap();
+        let f1 = write_temp_yaml(dir.path(), "a.yaml",
+            "automation:\n  - alias: No ID\n    trigger:\n      - platform: time\n    action:\n      - service: notify.notify\n");
+        let f2 = write_temp_yaml(dir.path(), "b.yaml",
+            "automation:\n  - alias: Also No ID\n    trigger:\n      - platform: time\n    action:\n      - service: notify.notify\n");
+        let files = vec![f1, f2];
+        let mut findings = Vec::new();
+        check_duplicate_automation_ids(&files, &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn duplicate_automation_id_same_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let f1 = write_temp_yaml(dir.path(), "bad.yaml",
+            "automation:\n  - id: dupe\n    alias: First\n    trigger:\n      - platform: time\n    action:\n      - service: notify.notify\n  - id: dupe\n    alias: Second\n    trigger:\n      - platform: time\n    action:\n      - service: notify.notify\n");
+        let files = vec![f1];
+        let mut findings = Vec::new();
+        check_duplicate_automation_ids(&files, &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    // --- Service reference extraction tests ---
+
+    #[test]
+    fn service_ref_extracts_basic() {
+        let refs = extract_service_references("test.yaml",
+            "  - service: light.turn_on\n    data:\n      entity_id: light.kitchen\n");
+        assert!(refs.contains_key("light.turn_on"));
+    }
+
+    #[test]
+    fn service_ref_extracts_action_syntax() {
+        let refs = extract_service_references("test.yaml",
+            "  - action: switch.turn_off\n    target:\n      entity_id: switch.pump\n");
+        assert!(refs.contains_key("switch.turn_off"));
+    }
+
+    #[test]
+    fn service_ref_extracts_quoted() {
+        let refs = extract_service_references("test.yaml",
+            "  - service: \"light.turn_on\"\n");
+        assert!(refs.contains_key("light.turn_on"));
+    }
+
+    #[test]
+    fn service_ref_with_comment() {
+        let refs = extract_service_references("test.yaml",
+            "  - service: light.turn_on  # turn on kitchen\n");
+        assert!(refs.contains_key("light.turn_on"));
+    }
+
+    #[test]
+    fn service_ref_skips_script_calls() {
+        let refs = extract_service_references("test.yaml",
+            "  - service: script.notify_mobile\n");
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn service_ref_keeps_pyscript() {
+        // pyscript.* is a real service domain, not an entity call
+        let refs = extract_service_references("test.yaml",
+            "  - service: pyscript.run_tests\n");
+        assert!(refs.contains_key("pyscript.run_tests"));
+    }
+
+    #[test]
+    fn service_ref_extracts_multiple() {
+        let refs = extract_service_references("test.yaml",
+            "  - service: light.turn_on\n  - service: notify.notify\n  - action: input_boolean.turn_on\n");
+        assert_eq!(refs.len(), 3);
+    }
+
+    #[test]
+    fn service_ref_skips_template_on_same_line() {
+        let refs = extract_service_references("test.yaml",
+            "  - service: \"{{ 'light.turn_' ~ mode }}\"\n");
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn service_ref_skips_multiline_scalar() {
+        let refs = extract_service_references("test.yaml",
+            "  - service: >\n      {{ 'light.turn_' ~ mode }}\n  - service: notify.notify\n");
+        // Should skip the multiline template but catch notify.notify
+        assert!(!refs.contains_key("light.turn_"));
+        assert!(refs.contains_key("notify.notify"));
+    }
+
+    #[test]
+    fn service_ref_skips_pipe_multiline() {
+        let refs = extract_service_references("test.yaml",
+            "  - service: |\n      light.turn_on\n  - action: switch.turn_off\n");
+        // Pipe multiline: the value is the literal block, not a service name
+        assert!(!refs.contains_key("light.turn_on"));
+        assert!(refs.contains_key("switch.turn_off"));
+    }
+
+    #[test]
+    fn service_ref_no_match_on_plain_text() {
+        let refs = extract_service_references("test.yaml",
+            "name: My Automation\nicon: mdi:light\n");
+        assert!(refs.is_empty());
     }
 }
