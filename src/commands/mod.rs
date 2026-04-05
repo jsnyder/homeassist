@@ -11,6 +11,7 @@ pub mod inspect;
 pub mod logbook;
 pub mod logs;
 pub mod services;
+pub mod stats;
 pub mod templates;
 pub mod validate;
 pub mod verify;

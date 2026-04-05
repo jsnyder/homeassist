@@ -157,6 +157,8 @@ enum Commands {
     },
     /// Get server health and connection status
     Health,
+    /// System status overview
+    Stats,
     /// Show LLM-optimized usage documentation
     Usage,
 }
@@ -478,6 +480,9 @@ async fn run(cli: Cli, mode: OutputMode, limit: Option<usize>) -> Result<(), App
         Commands::Health => {
             commands::health::check(&client, &auth_config.url, mode).await?
         }
+        Commands::Stats => {
+            commands::stats::status(&client, &auth_config.url, &auth_config.token, mode).await?
+        }
         Commands::Usage | Commands::Completions { .. } | Commands::Validate { .. } => {
             unreachable!()
         }
@@ -563,6 +568,9 @@ COMPLETIONS:
 
 HEALTH:
   homeassist health
+
+STATS:
+  homeassist stats
 
 OUTPUT: JSON default, --human for readable, --compact for LLM token savings
 AUTH: HA_URL + HA_TOKEN env vars, or --url/--token flags
