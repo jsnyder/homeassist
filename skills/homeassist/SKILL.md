@@ -1,6 +1,6 @@
 ---
 name: homeassist
-description: Use when querying or controlling Home Assistant — entities, services, templates, logs, automations, system health. Also for pre-deploy YAML validation and post-deploy verification.
+description: Use when querying or controlling Home Assistant — entities, services, templates, logs, automations, system status. Also for pre-deploy YAML validation, post-deploy verification, and system status dashboards.
 ---
 
 # homeassist CLI
@@ -27,9 +27,12 @@ homeassist services call light.turn_on --data '{"entity_id":"light.kitchen"}'
 homeassist services call light.turn_on --target '{"area_id":"kitchen"}'
 ```
 
-## System Monitoring
+## System Status & Monitoring
 
 ```bash
+homeassist stats                           # System overview: version, entities, automations, errors
+homeassist stats --dashboard my.yaml       # Custom dashboard with sections + templates
+homeassist stats --init > dashboard.yaml   # Auto-generate dashboard config from HA state
 homeassist health                          # Connection + version
 homeassist inspect                         # Unavailable/unknown audit, domain summary
 homeassist logs errors --tail 10           # System log via WebSocket (all installs)
@@ -37,6 +40,21 @@ homeassist logs errors --pattern "zigbee"  # Filter by regex
 homeassist diff --since 1                  # State changes in last hour
 homeassist watch sensor.temp --timeout 60 --state 72  # Wait for state
 ```
+
+### Dashboard Config (YAML)
+
+```yaml
+sections:
+  - name: Climate
+    entities:
+      - climate.thermostat
+      - sensor.outdoor_temperature
+    templates:
+      - label: "Net power"
+        template: "{{ (states('sensor.solar') | float - states('sensor.grid') | float) | round(1) }}W"
+```
+
+Config precedence: `--dashboard` flag > `.homeassist-dashboard.yaml` in cwd > `~/.config/homeassist/dashboard.yaml`
 
 ## Config & Automation
 
@@ -62,7 +80,8 @@ Override: `--human`, `--compact`, `--no-compact`.
 
 | Command | Compact format | Savings |
 |---------|---------------|---------|
-| `entities list/search` | TSV: `entity_id\tstate` | ~67% |
+| `stats` | `sys\tv...\tent\ttotal:N\tunavail:N...` (2-3 lines) | ~80% |
+| `entities list/search` | TSV: `entity_id\tstate` (capped at 50, `--limit N`) | ~67% |
 | `entities get` | Single-line JSON, no context | ~45% |
 | `services list <domain>` | `domain.svc(params)` | ~99% |
 
@@ -79,3 +98,5 @@ Override: `--human`, `--compact`, `--no-compact`.
 - `--pattern unavailable` matches "available" — use `--state unavailable`
 - `services list` without domain gives domain names only, not signatures
 - Need attributes in list? Add `--no-compact`
+- Global flags (`--compact`, `--human`, `--limit`) go BEFORE the subcommand: `homeassist --compact stats`
+- Entity lists default to 50 items in compact mode; use `--limit 0` for unlimited or `--limit N`
