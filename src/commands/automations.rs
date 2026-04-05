@@ -75,8 +75,13 @@ pub async fn scripts_list(client: &HaClient, mode: OutputMode, limit: Option<usi
     }
 }
 
-fn strip_script_domain(entity_id: &str) -> &str {
-    entity_id.strip_prefix("script.").unwrap_or(entity_id)
+fn validate_script_id(entity_id: &str) -> Result<&str, AppError> {
+    entity_id
+        .strip_prefix("script.")
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| AppError::Other(format!(
+            "Invalid script entity ID: \"{entity_id}\". Expected format: script.<name>"
+        )))
 }
 
 pub async fn scripts_run(
@@ -84,7 +89,7 @@ pub async fn scripts_run(
     entity_id: &str,
     mode: OutputMode,
 ) -> Result<String, AppError> {
-    let script_name = strip_script_domain(entity_id);
+    let script_name = validate_script_id(entity_id)?;
     let data = json!({});
     client
         .call_service("script", script_name, data)
@@ -100,12 +105,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn strip_script_domain_with_prefix() {
-        assert_eq!(strip_script_domain("script.my_script"), "my_script");
+    fn validate_script_id_with_prefix() {
+        assert_eq!(validate_script_id("script.my_script").unwrap(), "my_script");
     }
 
     #[test]
-    fn strip_script_domain_without_prefix() {
-        assert_eq!(strip_script_domain("my_script"), "my_script");
+    fn validate_script_id_without_prefix_errors() {
+        assert!(validate_script_id("my_script").is_err());
+    }
+
+    #[test]
+    fn validate_script_id_rejects_non_script_input() {
+        assert!(validate_script_id("reload").is_err());
+        assert!(validate_script_id("automation.test").is_err());
+        assert!(validate_script_id("turn_on").is_err());
+    }
+
+    #[test]
+    fn validate_script_id_accepts_valid_script_ids() {
+        assert_eq!(validate_script_id("script.my_script").unwrap(), "my_script");
+        assert_eq!(validate_script_id("script.morning_routine").unwrap(), "morning_routine");
+    }
+
+    #[test]
+    fn validate_script_id_rejects_empty_name() {
+        assert!(validate_script_id("script.").is_err());
     }
 }
