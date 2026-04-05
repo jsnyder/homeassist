@@ -138,6 +138,17 @@ pub fn fmt_num(n: usize) -> String {
     result.chars().rev().collect()
 }
 
+/// Format number for compact/LLM mode: 999 → "999", 10258 → "10.3k", 1200000 → "1.2M"
+pub fn fmt_num_compact(n: usize) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}k", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
 /// Truncate to max display chars, appending '…' if needed.
 pub fn truncate(s: &str, max: usize) -> String {
     let chars: Vec<char> = s.chars().collect();
@@ -258,6 +269,27 @@ mod tests {
     fn basename_extraction() {
         assert_eq!(basename("/Users/foo/bar.yaml"), "bar.yaml");
         assert_eq!(basename("bar.yaml"), "bar.yaml");
+    }
+
+    #[test]
+    fn fmt_num_compact_small() {
+        assert_eq!(fmt_num_compact(0), "0");
+        assert_eq!(fmt_num_compact(999), "999");
+    }
+
+    #[test]
+    fn fmt_num_compact_thousands() {
+        assert_eq!(fmt_num_compact(1000), "1.0k");
+        assert_eq!(fmt_num_compact(1500), "1.5k");
+        assert_eq!(fmt_num_compact(10258), "10.3k");
+        assert_eq!(fmt_num_compact(999999), "1000.0k");
+    }
+
+    #[test]
+    fn fmt_num_compact_millions() {
+        assert_eq!(fmt_num_compact(1000000), "1.0M");
+        assert_eq!(fmt_num_compact(1500000), "1.5M");
+        assert_eq!(fmt_num_compact(12345678), "12.3M");
     }
 
     #[test]
