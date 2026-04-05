@@ -20,14 +20,21 @@ pub async fn get(
     entity_id: &str,
     hours: u32,
     mode: OutputMode,
+    limit: Option<usize>,
 ) -> Result<String, AppError> {
     let entries = client.get_logbook(entity_id, hours).await?;
 
     if mode == OutputMode::Compact {
-        let lines: Vec<String> = entries
+        let total = entries.len();
+        let cap = limit.unwrap_or(total);
+        let mut lines: Vec<String> = entries
             .iter()
+            .take(cap)
             .map(|entry| format_compact_entry(entry))
             .collect();
+        if total > cap {
+            lines.push(format!("[+{} more]", total - cap));
+        }
         Ok(lines.join("\n"))
     } else {
         format_output(

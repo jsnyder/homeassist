@@ -8,7 +8,7 @@ fn extract_domain(entity_id: &str) -> Option<&str> {
     entity_id.split('.').next().filter(|d| !d.is_empty())
 }
 
-pub async fn triage(client: &HaClient, mode: OutputMode) -> Result<String, AppError> {
+pub async fn triage(client: &HaClient, mode: OutputMode, limit: Option<usize>) -> Result<String, AppError> {
     let human = mode == OutputMode::Human;
     let states: Vec<Value> =
         ui::with_spinner("Loading entities\u{2026}", human, client.get_states()).await?;
@@ -64,23 +64,31 @@ pub async fn triage(client: &HaClient, mode: OutputMode) -> Result<String, AppEr
             unknown.len()
         ));
         if !unavailable.is_empty() {
-            lines.push("--- unavailable ---".to_string());
-            for e in &unavailable {
+            let cap = limit.unwrap_or(unavailable.len());
+            lines.push(format!("--- unavailable ({}) ---", unavailable.len()));
+            for e in unavailable.iter().take(cap) {
                 lines.push(format!(
                     "{}\t{}",
                     e["entity_id"].as_str().unwrap_or(""),
                     e["friendly_name"].as_str().unwrap_or("")
                 ));
             }
+            if unavailable.len() > cap {
+                lines.push(format!("[+{} more]", unavailable.len() - cap));
+            }
         }
         if !unknown.is_empty() {
-            lines.push("--- unknown ---".to_string());
-            for e in &unknown {
+            let cap = limit.unwrap_or(unknown.len());
+            lines.push(format!("--- unknown ({}) ---", unknown.len()));
+            for e in unknown.iter().take(cap) {
                 lines.push(format!(
                     "{}\t{}",
                     e["entity_id"].as_str().unwrap_or(""),
                     e["friendly_name"].as_str().unwrap_or("")
                 ));
+            }
+            if unknown.len() > cap {
+                lines.push(format!("[+{} more]", unknown.len() - cap));
             }
         }
         Ok(lines.join("\n"))

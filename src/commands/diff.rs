@@ -10,6 +10,7 @@ pub async fn since(
     hours: u32,
     domain: Option<&str>,
     mode: OutputMode,
+    limit: Option<usize>,
 ) -> Result<String, AppError> {
     let states = client.get_states().await?;
 
@@ -49,8 +50,11 @@ pub async fn since(
     }
 
     if mode == OutputMode::Compact {
-        let lines: Vec<String> = changed
+        let total = changed.len();
+        let cap = limit.unwrap_or(total);
+        let mut lines: Vec<String> = changed
             .iter()
+            .take(cap)
             .filter_map(|e| {
                 let id = e.get("entity_id")?.as_str()?;
                 let state = e.get("state")?.as_str()?;
@@ -58,6 +62,9 @@ pub async fn since(
                 Some(format!("{id}\t{state}\t{changed_at}"))
             })
             .collect();
+        if total > cap {
+            lines.push(format!("[+{} more]", total - cap));
+        }
         Ok(lines.join("\n"))
     } else {
         format_output(

@@ -18,6 +18,7 @@ pub async fn get(
     entity_id: &str,
     hours: u32,
     mode: OutputMode,
+    limit: Option<usize>,
 ) -> Result<String, AppError> {
     let history = client.get_history(entity_id, hours).await?;
 
@@ -36,7 +37,7 @@ pub async fn get(
 
         if numeric.is_empty() {
             // Non-numeric: show state transitions
-            let transitions: Vec<String> = history
+            let all_transitions: Vec<String> = history
                 .iter()
                 .flat_map(|series| series.iter())
                 .filter_map(|entry| {
@@ -48,6 +49,12 @@ pub async fn get(
                     Some(format!("{changed}\t{state}"))
                 })
                 .collect();
+            let total = all_transitions.len();
+            let cap = limit.unwrap_or(total);
+            let mut transitions: Vec<String> = all_transitions.into_iter().take(cap).collect();
+            if total > cap {
+                transitions.push(format!("[+{} more]", total - cap));
+            }
             Ok(transitions.join("\n"))
         } else {
             Ok(format_numeric_summary(&numeric))

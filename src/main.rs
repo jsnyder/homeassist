@@ -427,7 +427,7 @@ async fn run(cli: Cli, mode: OutputMode, limit: Option<usize>) -> Result<(), App
         },
         Commands::History { action } => match action {
             HistoryAction::Get { entity_id, hours } => {
-                commands::history::get(&client, &entity_id, hours, mode).await?
+                commands::history::get(&client, &entity_id, hours, mode, limit).await?
             }
         },
         Commands::Logs { action } => match action {
@@ -445,7 +445,7 @@ async fn run(cli: Cli, mode: OutputMode, limit: Option<usize>) -> Result<(), App
         },
         Commands::Logbook { action } => match action {
             LogbookAction::Get { entity_id, hours } => {
-                commands::logbook::get(&client, &entity_id, hours, mode).await?
+                commands::logbook::get(&client, &entity_id, hours, mode, limit).await?
             }
         },
         Commands::Events { action } => match action {
@@ -469,7 +469,7 @@ async fn run(cli: Cli, mode: OutputMode, limit: Option<usize>) -> Result<(), App
             commands::batch::run(&client, &auth_config.url, file.as_deref(), mode).await?
         }
         Commands::Diff { since, domain } => {
-            commands::diff::since(&client, since, domain.as_deref(), mode).await?
+            commands::diff::since(&client, since, domain.as_deref(), mode, limit).await?
         }
         Commands::Watch {
             entity_id,
@@ -480,7 +480,7 @@ async fn run(cli: Cli, mode: OutputMode, limit: Option<usize>) -> Result<(), App
             commands::watch::entity(&client, &entity_id, timeout, interval, state.as_deref(), mode)
                 .await?
         }
-        Commands::Inspect => commands::inspect::triage(&client, mode).await?,
+        Commands::Inspect => commands::inspect::triage(&client, mode, limit).await?,
         Commands::Verify { baseline } => {
             commands::verify::check(&client, &auth_config.url, baseline.as_deref(), mode).await?
         }
