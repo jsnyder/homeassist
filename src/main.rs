@@ -117,11 +117,11 @@ enum Commands {
     Watch {
         /// Entity ID to watch
         entity_id: String,
-        /// Timeout in seconds (default: 300)
-        #[arg(long, default_value = "300")]
+        /// Timeout in seconds (default: 300, min: 1)
+        #[arg(long, default_value = "300", value_parser = clap::value_parser!(u32).range(1..))]
         timeout: u32,
-        /// Poll interval in seconds (default: 2)
-        #[arg(long, default_value = "2")]
+        /// Poll interval in seconds (default: 2, min: 1)
+        #[arg(long, default_value = "2", value_parser = clap::value_parser!(u32).range(1..))]
         interval: u32,
         /// Wait for specific state value
         #[arg(long)]
@@ -324,7 +324,11 @@ async fn main() {
         let output = e.to_error_output();
         match serde_json::to_string_pretty(&output) {
             Ok(json) => eprintln!("{json}"),
-            Err(_) => eprintln!("{{\"error\":\"{}\",\"code\":\"{}\"}}", e, e.code()),
+            Err(_) => {
+                // Escape quotes in error message to produce valid JSON
+                let msg = e.to_string().replace('\\', "\\\\").replace('"', "\\\"");
+                eprintln!("{{\"error\":\"{msg}\",\"code\":\"{}\"}}", e.code());
+            }
         }
         std::process::exit(1);
     }

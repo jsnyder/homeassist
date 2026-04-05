@@ -4,6 +4,9 @@ use crate::output::{format_output, OutputMode};
 use serde_json::json;
 
 fn format_numeric_summary(values: &[f64]) -> String {
+    if values.is_empty() {
+        return "samples=0".to_string();
+    }
     let min = values.iter().cloned().fold(f64::INFINITY, f64::min);
     let max = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
     let avg = values.iter().sum::<f64>() / values.len() as f64;
@@ -33,7 +36,9 @@ pub async fn get(
         let numeric: Vec<f64> = states
             .iter()
             .filter_map(|s| s.parse::<f64>().ok())
+            .filter(|v| v.is_finite())
             .collect();
+        let non_numeric = states.len() - numeric.len();
 
         if numeric.is_empty() {
             // Non-numeric: show state transitions
@@ -57,7 +62,11 @@ pub async fn get(
             }
             Ok(transitions.join("\n"))
         } else {
-            Ok(format_numeric_summary(&numeric))
+            let mut summary = format_numeric_summary(&numeric);
+            if non_numeric > 0 {
+                summary.push_str(&format!("\tnon_numeric:{non_numeric}"));
+            }
+            Ok(summary)
         }
     } else {
         format_output(
@@ -82,6 +91,12 @@ mod tests {
         assert!(result.contains("max=30.0"));
         assert!(result.contains("avg=24.4"));
         assert!(result.contains("samples=4"));
+    }
+
+    #[test]
+    fn format_numeric_summary_empty() {
+        let result = format_numeric_summary(&[]);
+        assert_eq!(result, "samples=0");
     }
 
     #[test]
