@@ -98,14 +98,14 @@ async fn execute_command(
             let pattern = args.get("pattern").and_then(|v| v.as_str());
             let name = args.get("name").and_then(|v| v.as_str());
             let state = args.get("state").and_then(|v| v.as_str());
-            crate::commands::entities::list(client, domain, pattern, name, state, mode).await
+            crate::commands::entities::list(client, domain, pattern, name, state, mode, None).await
         }
         "entities.search" => {
             let pattern = args
                 .get("pattern")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Other("Missing 'pattern' arg".into()))?;
-            crate::commands::entities::search(client, pattern, mode).await
+            crate::commands::entities::search(client, pattern, mode, None).await
         }
         "services.list" => {
             let domain = args.get("domain").and_then(|v| v.as_str());

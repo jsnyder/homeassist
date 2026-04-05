@@ -56,17 +56,25 @@ pub fn format_output(data: &Value, mode: OutputMode) -> Result<String, AppError>
     }
 }
 
-pub fn format_entity_list(entities: &[Value], mode: OutputMode) -> Result<String, AppError> {
+pub fn format_entity_list(entities: &[Value], mode: OutputMode, limit: Option<usize>) -> Result<String, AppError> {
     match mode {
-        OutputMode::Compact => Ok(entities
-            .iter()
-            .filter_map(|e| {
-                let id = e.get("entity_id")?.as_str()?;
-                let state = e.get("state")?.as_str().unwrap_or("unknown");
-                Some(format!("{id}\t{state}"))
-            })
-            .collect::<Vec<_>>()
-            .join("\n")),
+        OutputMode::Compact => {
+            let total = entities.len();
+            let cap = limit.unwrap_or(total);
+            let mut lines: Vec<String> = entities
+                .iter()
+                .take(cap)
+                .filter_map(|e| {
+                    let id = e.get("entity_id")?.as_str()?;
+                    let state = e.get("state")?.as_str().unwrap_or("unknown");
+                    Some(format!("{id}\t{state}"))
+                })
+                .collect();
+            if total > cap {
+                lines.push(format!("[+{} more]", total - cap));
+            }
+            Ok(lines.join("\n"))
+        }
         _ => Ok(serde_json::to_string_pretty(entities)?),
     }
 }
@@ -140,14 +148,14 @@ mod tests {
             json!({"entity_id": "light.kitchen", "state": "on"}),
             json!({"entity_id": "sensor.temp", "state": "72.5"}),
         ];
-        let output = format_entity_list(&entities, OutputMode::Compact).unwrap();
+        let output = format_entity_list(&entities, OutputMode::Compact, None).unwrap();
         assert_eq!(output, "light.kitchen\ton\nsensor.temp\t72.5");
     }
 
     #[test]
     fn entity_list_json_mode() {
         let entities = vec![json!({"entity_id": "light.kitchen", "state": "on"})];
-        let output = format_entity_list(&entities, OutputMode::Json).unwrap();
+        let output = format_entity_list(&entities, OutputMode::Json, None).unwrap();
         assert!(output.contains("light.kitchen"));
         assert!(output.contains('\n')); // pretty printed
     }
@@ -177,5 +185,36 @@ mod tests {
     #[test]
     fn from_flags_defaults_to_json() {
         assert_eq!(OutputMode::from_flags(false, false), OutputMode::Json);
+    }
+
+    #[test]
+    fn entity_list_compact_truncates_at_limit() {
+        let entities: Vec<Value> = (0..100)
+            .map(|i| json!({"entity_id": format!("sensor.s{i}"), "state": "on"}))
+            .collect();
+        let output = format_entity_list(&entities, OutputMode::Compact, Some(5)).unwrap();
+        let lines: Vec<&str> = output.split('\n').collect();
+        assert_eq!(lines.len(), 6); // 5 entities + 1 footer
+        assert!(lines[5].contains("+95 more"));
+    }
+
+    #[test]
+    fn entity_list_compact_no_truncation_under_limit() {
+        let entities = vec![
+            json!({"entity_id": "light.a", "state": "on"}),
+            json!({"entity_id": "light.b", "state": "off"}),
+        ];
+        let output = format_entity_list(&entities, OutputMode::Compact, Some(50)).unwrap();
+        assert!(!output.contains("+"));
+        assert_eq!(output.lines().count(), 2);
+    }
+
+    #[test]
+    fn entity_list_compact_no_limit() {
+        let entities: Vec<Value> = (0..100)
+            .map(|i| json!({"entity_id": format!("sensor.s{i}"), "state": "on"}))
+            .collect();
+        let output = format_entity_list(&entities, OutputMode::Compact, None).unwrap();
+        assert_eq!(output.lines().count(), 100);
     }
 }

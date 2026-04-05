@@ -38,6 +38,10 @@ pub struct Cli {
     #[arg(long)]
     no_compact: bool,
 
+    /// Max items in list output (default: 50 in compact mode, unlimited otherwise)
+    #[arg(long)]
+    limit: Option<usize>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -301,8 +305,13 @@ enum ScriptAction {
 async fn main() {
     let cli = Cli::parse();
     let mode = OutputMode::auto_detect(cli.human, cli.compact, cli.no_compact);
+    let effective_limit = match (cli.limit, mode) {
+        (Some(n), _) => Some(n),
+        (None, OutputMode::Compact) => Some(50),
+        _ => None,
+    };
 
-    if let Err(e) = run(cli, mode).await {
+    if let Err(e) = run(cli, mode, effective_limit).await {
         let output = e.to_error_output();
         match serde_json::to_string_pretty(&output) {
             Ok(json) => eprintln!("{json}"),
@@ -312,7 +321,7 @@ async fn main() {
     }
 }
 
-async fn run(cli: Cli, mode: OutputMode) -> Result<(), AppError> {
+async fn run(cli: Cli, mode: OutputMode, limit: Option<usize>) -> Result<(), AppError> {
     // Commands that don't need auth
     match &cli.command {
         Commands::Usage => {
@@ -366,6 +375,7 @@ async fn run(cli: Cli, mode: OutputMode) -> Result<(), AppError> {
                     name.as_deref(),
                     state.as_deref(),
                     mode,
+                    limit,
                 )
                 .await?
             }
@@ -373,7 +383,7 @@ async fn run(cli: Cli, mode: OutputMode) -> Result<(), AppError> {
                 commands::entities::get(&client, &entity_id, mode).await?
             }
             EntityAction::Search { pattern } => {
-                commands::entities::search(&client, &pattern, mode).await?
+                commands::entities::search(&client, &pattern, mode, limit).await?
             }
         },
         Commands::Services { action } => match action {
@@ -435,13 +445,13 @@ async fn run(cli: Cli, mode: OutputMode) -> Result<(), AppError> {
             }
         },
         Commands::Automations { action } => match action {
-            AutomationAction::List => commands::automations::list(&client, mode).await?,
+            AutomationAction::List => commands::automations::list(&client, mode, limit).await?,
             AutomationAction::Trigger { entity_id } => {
                 commands::automations::trigger(&client, &entity_id, mode).await?
             }
         },
         Commands::Scripts { action } => match action {
-            ScriptAction::List => commands::automations::scripts_list(&client, mode).await?,
+            ScriptAction::List => commands::automations::scripts_list(&client, mode, limit).await?,
             ScriptAction::Run { entity_id } => {
                 commands::automations::scripts_run(&client, &entity_id, mode).await?
             }

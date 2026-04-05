@@ -3,7 +3,7 @@ use crate::error::AppError;
 use crate::output::{format_entity_list, format_output, OutputMode};
 use serde_json::{json, Value};
 
-pub async fn list(client: &HaClient, mode: OutputMode) -> Result<String, AppError> {
+pub async fn list(client: &HaClient, mode: OutputMode, limit: Option<usize>) -> Result<String, AppError> {
     let states = client.get_states().await?;
     let automations: Vec<Value> = states
         .into_iter()
@@ -15,7 +15,7 @@ pub async fn list(client: &HaClient, mode: OutputMode) -> Result<String, AppErro
         .collect();
 
     if mode == OutputMode::Compact {
-        format_entity_list(&automations, mode)
+        format_entity_list(&automations, mode, limit)
     } else {
         let result: Vec<Value> = automations
             .into_iter()
@@ -47,7 +47,7 @@ pub async fn trigger(
     )
 }
 
-pub async fn scripts_list(client: &HaClient, mode: OutputMode) -> Result<String, AppError> {
+pub async fn scripts_list(client: &HaClient, mode: OutputMode, limit: Option<usize>) -> Result<String, AppError> {
     let states = client.get_states().await?;
     let scripts: Vec<Value> = states
         .into_iter()
@@ -59,7 +59,7 @@ pub async fn scripts_list(client: &HaClient, mode: OutputMode) -> Result<String,
         .collect();
 
     if mode == OutputMode::Compact {
-        format_entity_list(&scripts, mode)
+        format_entity_list(&scripts, mode, limit)
     } else {
         let result: Vec<Value> = scripts
             .into_iter()

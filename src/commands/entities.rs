@@ -12,6 +12,7 @@ pub async fn list(
     name: Option<&str>,
     state: Option<&str>,
     mode: OutputMode,
+    limit: Option<usize>,
 ) -> Result<String, AppError> {
     let human = mode == OutputMode::Human;
     let mut states =
@@ -41,7 +42,7 @@ pub async fn list(
     }
 
     if mode == OutputMode::Compact {
-        format_entity_list(&states, mode)
+        format_entity_list(&states, mode, limit)
     } else if mode == OutputMode::Human {
         let s = ui::Style::detect();
         let title = match domain {
@@ -90,6 +91,7 @@ pub async fn search(
     client: &HaClient,
     pattern: &str,
     mode: OutputMode,
+    limit: Option<usize>,
 ) -> Result<String, AppError> {
     let states = client.get_states().await?;
     let re = safe_regex(pattern, true)?;
@@ -100,7 +102,7 @@ pub async fn search(
         .collect();
 
     if mode == OutputMode::Compact {
-        format_entity_list(&matches, mode)
+        format_entity_list(&matches, mode, limit)
     } else if mode == OutputMode::Human {
         let s = ui::Style::detect();
         let title = format!("Search \u{2014} {pattern}");
