@@ -1,6 +1,6 @@
 use crate::auth::AuthConfig;
 use crate::error::AppError;
-use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -201,8 +201,15 @@ pub fn chrono_offset_public(hours: u32) -> Result<String, AppError> {
     chrono_offset(hours)
 }
 
+/// Encode a URL path segment, preserving RFC 3986 unreserved characters.
+/// Encodes everything except alphanumerics, underscores, hyphens, tildes, and periods.
+const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'_')
+    .remove(b'-')
+    .remove(b'~');
+
 fn encode_path_segment(s: &str) -> String {
-    utf8_percent_encode(s, NON_ALPHANUMERIC).to_string()
+    utf8_percent_encode(s, PATH_SEGMENT_ENCODE_SET).to_string()
 }
 
 fn chrono_offset(hours: u32) -> Result<String, AppError> {
@@ -268,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn encode_path_segment_encodes_special_chars() {
+    fn encode_path_segment_encodes_dots() {
         assert_eq!(encode_path_segment("light.kitchen"), "light%2Ekitchen");
         assert_eq!(encode_path_segment("sensor.temp"), "sensor%2Etemp");
     }
@@ -276,5 +283,34 @@ mod tests {
     #[test]
     fn encode_path_segment_preserves_alphanumeric() {
         assert_eq!(encode_path_segment("abc123"), "abc123");
+    }
+
+    #[test]
+    fn encode_path_segment_preserves_underscores() {
+        assert_eq!(encode_path_segment("select_option"), "select_option");
+        assert_eq!(encode_path_segment("turn_on"), "turn_on");
+        assert_eq!(encode_path_segment("set_value"), "set_value");
+    }
+
+    #[test]
+    fn encode_path_segment_preserves_hyphens_and_tildes() {
+        assert_eq!(encode_path_segment("my-service"), "my-service");
+        assert_eq!(encode_path_segment("my~service"), "my~service");
+    }
+
+    #[test]
+    fn encode_path_segment_encodes_special_chars() {
+        assert_eq!(encode_path_segment("a b"), "a%20b");
+        assert_eq!(encode_path_segment("a/b"), "a%2Fb");
+        assert_eq!(encode_path_segment("a:b"), "a%3Ab");
+    }
+
+    #[test]
+    fn service_call_url_preserves_underscores() {
+        // Simulates the URL construction in call_service
+        let domain = encode_path_segment("select");
+        let service = encode_path_segment("select_option");
+        let url = format!("/services/{domain}/{service}");
+        assert_eq!(url, "/services/select/select_option");
     }
 }
