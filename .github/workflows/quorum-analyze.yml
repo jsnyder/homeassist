@@ -1,0 +1,87 @@
+# Stage 1: Unprivileged analysis (pull_request)
+#
+# Runs quorum code review on changed Rust files. For internal PRs (same repo),
+# QUORUM_API_KEY is available and enables LLM-augmented review. For fork PRs,
+# secrets are withheld by GitHub and quorum falls back to local-only AST analysis.
+#
+# Findings are uploaded as artifacts for Stage 2 (quorum-report.yml) to post
+# as PR comments. This workflow never has write permissions.
+#
+# Security model: https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/
+
+name: Quorum Analyze
+
+on:
+  pull_request:
+    paths: ['**/*.rs', 'Cargo.toml', 'Cargo.lock']
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: quorum
+
+      - name: Install quorum
+        run: |
+          if ! command -v quorum &>/dev/null; then
+            cargo install --git https://github.com/jsnyder/quorum --locked
+          fi
+
+      - name: Run quorum review
+        env:
+          QUORUM_API_KEY: ${{ secrets.QUORUM_API_KEY }}
+          QUORUM_BASE_URL: ${{ secrets.QUORUM_BASE_URL }}
+          QUORUM_ALLOWED_BASE_URL_HOSTS: ${{ secrets.QUORUM_ALLOWED_BASE_URL_HOSTS }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          FILES=$(git diff --name-only "origin/${BASE_REF}...HEAD" -- '*.rs')
+          if [ -z "$FILES" ]; then
+            echo "No Rust files changed" > quorum-findings.txt
+            echo "skip" > quorum-status.txt
+            exit 0
+          fi
+
+          git diff "origin/${BASE_REF}...HEAD" > /tmp/changes.patch
+
+          MODE="local-only"
+          if [ -n "$QUORUM_API_KEY" ]; then
+            MODE="llm-augmented"
+          fi
+          echo "::notice::Running quorum in ${MODE} mode"
+
+          if quorum review $FILES \
+            --diff-file /tmp/changes.patch \
+            --compact \
+            --no-auto-calibrate \
+            2>&1 | tee quorum-findings.txt; then
+            echo "clean" > quorum-status.txt
+          else
+            EXIT_CODE=$?
+            if [ "$EXIT_CODE" -eq 1 ]; then
+              echo "warnings" > quorum-status.txt
+            elif [ "$EXIT_CODE" -eq 2 ]; then
+              echo "critical" > quorum-status.txt
+            else
+              echo "error" > quorum-status.txt
+            fi
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: quorum-analysis
+          path: |
+            quorum-findings.txt
+            quorum-status.txt
+          retention-days: 1
