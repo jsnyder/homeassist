@@ -173,18 +173,15 @@ mod tests {
     }
 
     #[test]
-    fn auto_detect_claudecode_env() {
+    fn auto_detect_claudecode_env_and_no_compact() {
         unsafe { std::env::set_var("CLAUDECODE", "1") };
+
         let mode = OutputMode::auto_detect(false, false, false);
         assert_eq!(mode, OutputMode::Compact);
-        unsafe { std::env::remove_var("CLAUDECODE") };
-    }
 
-    #[test]
-    fn auto_detect_no_compact_overrides() {
-        unsafe { std::env::set_var("CLAUDECODE", "1") };
-        let mode = OutputMode::auto_detect(false, false, true);
-        assert_eq!(mode, OutputMode::Json);
+        let mode_override = OutputMode::auto_detect(false, false, true);
+        assert_eq!(mode_override, OutputMode::Json);
+
         unsafe { std::env::remove_var("CLAUDECODE") };
     }
 

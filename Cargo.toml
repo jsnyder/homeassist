@@ -5,6 +5,10 @@ edition = "2024"
 description = "Token-efficient Home Assistant CLI for AI agents"
 license = "MIT"
 repository = "https://github.com/jsnyder/homeassist"
+homepage = "https://github.com/jsnyder/homeassist"
+authors = ["Jesse Snyder"]
+keywords = ["home-assistant", "iot", "smart-home", "cli", "automation"]
+categories = ["command-line-utilities"]
 
 [[bin]]
 name = "homeassist"
