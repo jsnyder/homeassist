@@ -66,7 +66,8 @@ pub fn format_entity_list(entities: &[Value], mode: OutputMode, limit: Option<us
                 .iter()
                 .filter_map(|e| {
                     let id = e.get("entity_id")?.as_str()?;
-                    let state = e.get("state")?.as_str().unwrap_or("unknown");
+                    let state = e.get("state")?.as_str().unwrap_or("unknown")
+                        .replace(['\t', '\n', '\r'], " ");
                     Some(format!("{id}\t{state}"))
                 })
                 .collect();
@@ -211,6 +212,20 @@ mod tests {
         let output = format_entity_list(&entities, OutputMode::Compact, Some(50)).unwrap();
         assert!(!output.contains("+"));
         assert_eq!(output.lines().count(), 2);
+    }
+
+    #[test]
+    fn entity_list_compact_sanitizes_tsv_fields() {
+        let entities = vec![
+            json!({"entity_id": "sensor.test", "state": "has\ttab"}),
+            json!({"entity_id": "sensor.nl", "state": "has\nnewline"}),
+        ];
+        let output = format_entity_list(&entities, OutputMode::Compact, None).unwrap();
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines.len(), 2, "newlines in state should not create extra lines");
+        for line in &lines {
+            assert_eq!(line.matches('\t').count(), 1, "tabs in state should not create extra columns");
+        }
     }
 
     #[test]
