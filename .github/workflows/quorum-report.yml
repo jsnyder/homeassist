@@ -1,0 +1,143 @@
+# Stage 2: Privileged reporting (workflow_run)
+#
+# Downloads analysis artifacts from Stage 1 (quorum-analyze.yml) and posts
+# findings as a PR comment. This workflow has write access but NEVER checks
+# out or executes PR code.
+#
+# Security measures:
+# - Validates upstream trigger was pull_request (not spoofed)
+# - Resolves PR number server-side via GitHub API (not from attacker-controlled artifact)
+# - Uses trusted head_sha from workflow_run context (not from artifact)
+# - Sanitizes findings text before embedding in comment (code-fenced, truncated)
+# - Updates existing comment instead of creating duplicates
+#
+# Security model: https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/
+
+name: Quorum Report
+
+on:
+  workflow_run:
+    workflows: ["Quorum Analyze"]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  report:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download analysis artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: quorum-analysis
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Post PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            // Resolve PR number server-side from the trusted workflow_run context.
+            // workflow_run.pull_requests is empty for fork PRs, so we fall back to
+            // searching by head SHA via the GitHub API. This avoids trusting the
+            // artifact's pr-number.txt which is attacker-controlled.
+            const headSha = context.payload.workflow_run.head_sha;
+            const shortSha = headSha.substring(0, 7);
+
+            let prNumber;
+
+            const workflowPRs = context.payload.workflow_run.pull_requests;
+            if (workflowPRs && workflowPRs.length > 0) {
+              prNumber = workflowPRs[0].number;
+            } else {
+              // Fork PRs: workflow_run.pull_requests is empty.
+              // Search for the PR by head SHA via the API.
+              const pulls = await github.paginate(github.rest.pulls.list, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                per_page: 100,
+              });
+              const match = pulls.find(pr => pr.head.sha === headSha);
+              if (!match) {
+                core.warning(`No open PR found for SHA ${shortSha}, skipping comment`);
+                return;
+              }
+              prNumber = match.number;
+            }
+
+            core.info(`Resolved PR #${prNumber} for SHA ${shortSha}`);
+
+            // Read findings from artifact (attacker-controlled text — sanitize before use)
+            const status = fs.readFileSync('quorum-status.txt', 'utf8').trim();
+            const findings = fs.readFileSync('quorum-findings.txt', 'utf8').trim();
+
+            // Build comment body
+            let body;
+
+            if (status === 'skip') {
+              body = `### Quorum Review (${shortSha})\n\nNo Rust files changed — skipped.`;
+            } else if (status === 'clean') {
+              body = `### Quorum Review (${shortSha})\n\nNo findings.`;
+            } else {
+              const icon = status === 'critical' ? '🔴' : '🟡';
+              const label = status === 'critical' ? 'Critical findings' : 'Findings';
+
+              // Sanitize: escape backtick sequences to prevent code fence breakout,
+              // and truncate to stay under GitHub's 65536 char comment limit
+              let sanitized = findings
+                .replace(/`{3,}/g, '`` `')
+                .substring(0, 60000);
+              if (findings.length > 60000) {
+                sanitized += '\n... (truncated)';
+              }
+
+              body = [
+                `### ${icon} Quorum Review (${shortSha})`,
+                '',
+                `<details><summary>${label}</summary>`,
+                '',
+                '```',
+                sanitized,
+                '```',
+                '',
+                '</details>',
+              ].join('\n');
+            }
+
+            // Upsert: update existing quorum comment or create new one
+            const QUORUM_MARKER = 'Quorum Review (';
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+
+            const existing = comments.find(c =>
+              c.user?.type === 'Bot' && c.body?.includes(QUORUM_MARKER)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+              core.info(`Updated existing comment ${existing.id}`);
+            } else {
+              const { data: created } = await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body,
+              });
+              core.info(`Created comment ${created.id}`);
+            }
