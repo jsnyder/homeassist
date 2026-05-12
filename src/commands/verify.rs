@@ -12,13 +12,12 @@ pub async fn check(
 ) -> Result<String, AppError> {
     // Run all checks concurrently
     let human = mode == OutputMode::Human;
-    let (config_result, states_result, automations_result) = ui::with_spinner(
+    let (config_result, states_result) = ui::with_spinner(
         "Running checks\u{2026}",
         human,
         async {
             tokio::join!(
                 client.get_config(),
-                client.get_states(),
                 client.get_states(),
             )
         },
@@ -59,17 +58,14 @@ pub async fn check(
     }
 
     // Automation states
-    let automations: Vec<&Value> = match &automations_result {
-        Ok(s) => s
-            .iter()
-            .filter(|e| {
-                e.get("entity_id")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|id| id.starts_with("automation."))
-            })
-            .collect(),
-        Err(_) => Vec::new(),
-    };
+    let automations: Vec<&Value> = states
+        .iter()
+        .filter(|e| {
+            e.get("entity_id")
+                .and_then(|v| v.as_str())
+                .is_some_and(|id| id.starts_with("automation."))
+        })
+        .collect();
     let automations_on = automations
         .iter()
         .filter(|a| a.get("state").and_then(|v| v.as_str()) == Some("on"))

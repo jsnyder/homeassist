@@ -49,9 +49,19 @@ pub async fn since(
         }
     }
 
+    format_since_output(&changed, hours, mode, limit)
+}
+
+fn format_since_output(
+    changed: &[Value],
+    hours: u32,
+    mode: OutputMode,
+    limit: Option<usize>,
+) -> Result<String, AppError> {
+    let total = changed.len();
+    let cap = limit.unwrap_or(total);
+
     if mode == OutputMode::Compact {
-        let total = changed.len();
-        let cap = limit.unwrap_or(total);
         let mut lines: Vec<String> = changed
             .iter()
             .take(cap)
@@ -67,11 +77,12 @@ pub async fn since(
         }
         Ok(lines.join("\n"))
     } else {
+        let capped: Vec<&Value> = changed.iter().take(cap).collect();
         format_output(
             &json!({
                 "hours": hours,
-                "changed_count": changed.len(),
-                "entities": changed,
+                "changed_count": total,
+                "entities": capped,
             }),
             mode,
         )
@@ -97,6 +108,29 @@ mod tests {
         // A timestamp from "now" should be within any window
         let now = crate::client::chrono_offset_public(0).unwrap();
         assert!(is_within_hours(&now, 1));
+    }
+
+    #[test]
+    fn format_since_json_respects_limit() {
+        let changed: Vec<Value> = (0..10)
+            .map(|i| json!({"entity_id": format!("sensor.s{i}"), "state": "on", "last_changed": "2025-01-01T00:00:00"}))
+            .collect();
+        let output = super::format_since_output(&changed, 1, OutputMode::Json, Some(3)).unwrap();
+        let parsed: Value = serde_json::from_str(&output).unwrap();
+        let entities = parsed["entities"].as_array().unwrap();
+        assert_eq!(entities.len(), 3);
+        assert_eq!(parsed["changed_count"], 10);
+    }
+
+    #[test]
+    fn format_since_compact_respects_limit() {
+        let changed: Vec<Value> = (0..10)
+            .map(|i| json!({"entity_id": format!("sensor.s{i}"), "state": "on", "last_changed": "2025-01-01T00:00:00"}))
+            .collect();
+        let output = super::format_since_output(&changed, 1, OutputMode::Compact, Some(3)).unwrap();
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines.len(), 4); // 3 entities + [+7 more]
+        assert!(lines[3].contains("+7 more"));
     }
 
     #[test]

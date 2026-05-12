@@ -151,6 +151,9 @@ pub fn fmt_num_compact(n: usize) -> String {
 
 /// Truncate to max display chars, appending '…' if needed.
 pub fn truncate(s: &str, max: usize) -> String {
+    if max == 0 {
+        return String::new();
+    }
     let chars: Vec<char> = s.chars().collect();
     if chars.len() <= max {
         s.to_string()
@@ -263,6 +266,7 @@ mod tests {
     fn truncation() {
         assert_eq!(truncate("hello", 10), "hello");
         assert_eq!(truncate("hello world!", 5), "hell…");
+        assert_eq!(truncate("anything", 0), "");
     }
 
     #[test]

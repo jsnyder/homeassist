@@ -2,7 +2,7 @@ use crate::client::HaClient;
 use crate::error::AppError;
 use crate::output::{format_output, OutputMode};
 use crate::validation::{parse_json_option, validate_service_format};
-use serde_json::{json, Value};
+use serde_json::json;
 
 pub async fn list(
     client: &HaClient,
@@ -51,10 +51,7 @@ pub async fn list(
             format_output(&json!({}), mode)
         }
     } else {
-        let mut domains: Vec<&String> = map.keys().collect();
-        domains.sort();
-        let domain_list: Vec<Value> = domains.iter().map(|d| Value::String(d.to_string())).collect();
-        format_output(&Value::Array(domain_list), mode)
+        format_output(&json!(map), mode)
     }
 }
 

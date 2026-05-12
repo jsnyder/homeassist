@@ -56,9 +56,19 @@ pub async fn run(
             continue;
         }
 
-        let (command, args) = parse_batch_command(line).map_err(|e| {
-            AppError::Other(format!("Line {}: {e}", i + 1))
-        })?;
+        let parsed = parse_batch_command(line);
+        let (command, args) = match parsed {
+            Ok(v) => v,
+            Err(e) => {
+                results.push(json!({
+                    "command": null,
+                    "line": i + 1,
+                    "success": false,
+                    "result": format!("Line {}: {e}", i + 1),
+                }));
+                continue;
+            }
+        };
 
         let result = execute_command(client, url, &command, &args, mode).await;
 
@@ -124,9 +134,22 @@ async fn execute_command(
                 .get("service")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Other("Missing 'service' arg".into()))?;
-            let data = args.get("data").and_then(|v| v.as_str());
-            let target = args.get("target").and_then(|v| v.as_str());
-            crate::commands::services::call(client, service, data, target, mode).await
+            let data = args.get("data").map(|v| match v {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            });
+            let target = args.get("target").map(|v| match v {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            });
+            crate::commands::services::call(
+                client,
+                service,
+                data.as_deref(),
+                target.as_deref(),
+                mode,
+            )
+            .await
         }
         "templates.render" => {
             let template = args

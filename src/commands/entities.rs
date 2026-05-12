@@ -43,26 +43,29 @@ pub async fn list(
 
     if mode == OutputMode::Compact {
         format_entity_list(&states, mode, limit)
-    } else if mode == OutputMode::Human {
-        let s = ui::Style::detect();
-        let title = match domain {
-            Some(d) => format!("Entities \u{2014} {d}"),
-            None => "Entities".to_string(),
-        };
-        Ok(ui::entity_table(&states, &title, &s))
     } else {
-        let result: Vec<Value> = states
-            .into_iter()
-            .map(|e| {
-                json!({
-                    "entity_id": e.get("entity_id"),
-                    "state": e.get("state"),
-                    "friendly_name": e.pointer("/attributes/friendly_name"),
-                    "last_changed": e.get("last_changed"),
+        apply_limit(&mut states, limit);
+        if mode == OutputMode::Human {
+            let s = ui::Style::detect();
+            let title = match domain {
+                Some(d) => format!("Entities \u{2014} {d}"),
+                None => "Entities".to_string(),
+            };
+            Ok(ui::entity_table(&states, &title, &s))
+        } else {
+            let result: Vec<Value> = states
+                .into_iter()
+                .map(|e| {
+                    json!({
+                        "entity_id": e.get("entity_id"),
+                        "state": e.get("state"),
+                        "friendly_name": e.pointer("/attributes/friendly_name"),
+                        "last_changed": e.get("last_changed"),
+                    })
                 })
-            })
-            .collect();
-        format_output(&Value::Array(result), mode)
+                .collect();
+            format_output(&Value::Array(result), mode)
+        }
     }
 }
 
@@ -103,22 +106,32 @@ pub async fn search(
 
     if mode == OutputMode::Compact {
         format_entity_list(&matches, mode, limit)
-    } else if mode == OutputMode::Human {
-        let s = ui::Style::detect();
-        let title = format!("Search \u{2014} {pattern}");
-        Ok(ui::entity_table(&matches, &title, &s))
     } else {
-        let result: Vec<Value> = matches
-            .into_iter()
-            .map(|e| {
-                json!({
-                    "entity_id": e.get("entity_id"),
-                    "state": e.get("state"),
-                    "friendly_name": e.pointer("/attributes/friendly_name"),
+        let mut capped = matches;
+        apply_limit(&mut capped, limit);
+        if mode == OutputMode::Human {
+            let s = ui::Style::detect();
+            let title = format!("Search \u{2014} {pattern}");
+            Ok(ui::entity_table(&capped, &title, &s))
+        } else {
+            let result: Vec<Value> = capped
+                .into_iter()
+                .map(|e| {
+                    json!({
+                        "entity_id": e.get("entity_id"),
+                        "state": e.get("state"),
+                        "friendly_name": e.pointer("/attributes/friendly_name"),
+                    })
                 })
-            })
-            .collect();
-        format_output(&Value::Array(result), mode)
+                .collect();
+            format_output(&Value::Array(result), mode)
+        }
+    }
+}
+
+fn apply_limit(entities: &mut Vec<Value>, limit: Option<usize>) {
+    if let Some(cap) = limit {
+        entities.truncate(cap);
     }
 }
 
@@ -154,6 +167,20 @@ mod tests {
             json!({"entity_id": "binary_sensor.door", "state": "unavailable", "attributes": {"friendly_name": "Front Door"}}),
             json!({"entity_id": "switch.fan", "state": "on", "attributes": {"friendly_name": "Fan"}}),
         ]
+    }
+
+    #[test]
+    fn apply_limit_truncates() {
+        let mut entities = test_entities();
+        super::apply_limit(&mut entities, Some(2));
+        assert_eq!(entities.len(), 2);
+    }
+
+    #[test]
+    fn apply_limit_none_keeps_all() {
+        let mut entities = test_entities();
+        super::apply_limit(&mut entities, None);
+        assert_eq!(entities.len(), 5);
     }
 
     #[test]

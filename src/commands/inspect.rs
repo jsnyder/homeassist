@@ -55,11 +55,26 @@ pub async fn triage(client: &HaClient, mode: OutputMode, limit: Option<usize>) -
         }
     }
 
+    // Sort domain counts descending
+    let mut domains: Vec<_> = domain_counts.into_iter().collect();
+    domains.sort_by_key(|d| std::cmp::Reverse(d.1));
+
+    format_triage_output(&unavailable, &unknown, states.len(), &domains, mode, limit)
+}
+
+fn format_triage_output(
+    unavailable: &[Value],
+    unknown: &[Value],
+    total_entities: usize,
+    domains: &[(String, usize)],
+    mode: OutputMode,
+    limit: Option<usize>,
+) -> Result<String, AppError> {
     if mode == OutputMode::Compact {
         let mut lines = Vec::new();
         lines.push(format!(
             "total:{}\tunavailable:{}\tunknown:{}",
-            states.len(),
+            total_entities,
             unavailable.len(),
             unknown.len()
         ));
@@ -92,74 +107,69 @@ pub async fn triage(client: &HaClient, mode: OutputMode, limit: Option<usize>) -
             }
         }
         Ok(lines.join("\n"))
-    } else {
-        // Sort domain counts descending
-        let mut domains: Vec<_> = domain_counts.into_iter().collect();
-        domains.sort_by(|a, b| b.1.cmp(&a.1));
+    } else if mode == OutputMode::Human {
+        let s = ui::Style::detect();
+        let mut out = format!(
+            "{}\n\n",
+            s.header(&format!("System Health \u{2014} {} entities", ui::fmt_num(total_entities)))
+        );
 
-        if mode == OutputMode::Human {
-            let s = ui::Style::detect();
-            let mut out = format!(
-                "{}\n\n",
-                s.header(&format!("System Health \u{2014} {} entities", ui::fmt_num(states.len())))
-            );
-
-            // Domain table
-            let name_w = domains.iter().map(|(k, _)| k.len()).max().unwrap_or(10).max(6);
+        let name_w = domains.iter().map(|(k, _)| k.len()).max().unwrap_or(10).max(6);
+        out.push_str(&format!(
+            "  {}{:<name_w$}  {:>6}{}\n",
+            s.dim, "Domain", "Count", s.reset,
+        ));
+        out.push_str(&format!("  {}\n", s.separator(name_w + 9)));
+        for (domain, count) in domains {
             out.push_str(&format!(
-                "  {}{:<name_w$}  {:>6}{}\n",
-                s.dim, "Domain", "Count", s.reset,
+                "  {:<name_w$}  {:>6}\n",
+                domain,
+                ui::fmt_num(*count),
             ));
-            out.push_str(&format!("  {}\n", s.separator(name_w + 9)));
-            for (domain, count) in &domains {
-                out.push_str(&format!(
-                    "  {:<name_w$}  {:>6}\n",
-                    domain,
-                    ui::fmt_num(*count),
-                ));
-            }
-
-            // Summary
-            out.push('\n');
-            if !unavailable.is_empty() {
-                out.push_str(&format!(
-                    "  {}{} unavailable{}\n",
-                    s.yellow,
-                    ui::fmt_num(unavailable.len()),
-                    s.reset,
-                ));
-            }
-            if !unknown.is_empty() {
-                out.push_str(&format!(
-                    "  {}{} unknown{}\n",
-                    s.yellow,
-                    ui::fmt_num(unknown.len()),
-                    s.reset,
-                ));
-            }
-            if unavailable.is_empty() && unknown.is_empty() {
-                out.push_str(&format!("  {}\n", s.pass("All entities healthy")));
-            }
-
-            Ok(out)
-        } else {
-            let domain_summary: Value = domains
-                .into_iter()
-                .map(|(k, v)| json!({"domain": k, "count": v}))
-                .collect();
-
-            format_output(
-                &json!({
-                    "total_entities": states.len(),
-                    "unavailable_count": unavailable.len(),
-                    "unknown_count": unknown.len(),
-                    "unavailable": unavailable,
-                    "unknown": unknown,
-                    "domains": domain_summary,
-                }),
-                mode,
-            )
         }
+
+        out.push('\n');
+        if !unavailable.is_empty() {
+            out.push_str(&format!(
+                "  {}{} unavailable{}\n",
+                s.yellow,
+                ui::fmt_num(unavailable.len()),
+                s.reset,
+            ));
+        }
+        if !unknown.is_empty() {
+            out.push_str(&format!(
+                "  {}{} unknown{}\n",
+                s.yellow,
+                ui::fmt_num(unknown.len()),
+                s.reset,
+            ));
+        }
+        if unavailable.is_empty() && unknown.is_empty() {
+            out.push_str(&format!("  {}\n", s.pass("All entities healthy")));
+        }
+
+        Ok(out)
+    } else {
+        let cap = limit.unwrap_or(usize::MAX);
+        let capped_unavail: Vec<&Value> = unavailable.iter().take(cap).collect();
+        let capped_unknown: Vec<&Value> = unknown.iter().take(cap).collect();
+        let domain_summary: Value = domains
+            .iter()
+            .map(|(k, v)| json!({"domain": k, "count": v}))
+            .collect();
+
+        format_output(
+            &json!({
+                "total_entities": total_entities,
+                "unavailable_count": unavailable.len(),
+                "unknown_count": unknown.len(),
+                "unavailable": capped_unavail,
+                "unknown": capped_unknown,
+                "domains": domain_summary,
+            }),
+            mode,
+        )
     }
 }
 
@@ -171,6 +181,22 @@ mod tests {
     fn extract_domain_from_entity_id() {
         assert_eq!(extract_domain("sensor.living_room_temperature"), Some("sensor"));
         assert_eq!(extract_domain("light.kitchen"), Some("light"));
+    }
+
+    #[test]
+    fn format_triage_json_respects_limit() {
+        let unavailable: Vec<Value> = (0..10)
+            .map(|i| json!({"entity_id": format!("sensor.u{i}"), "friendly_name": format!("Sensor {i}")}))
+            .collect();
+        let unknown: Vec<Value> = (0..5)
+            .map(|i| json!({"entity_id": format!("sensor.k{i}"), "friendly_name": format!("Unknown {i}")}))
+            .collect();
+        let output = super::format_triage_output(&unavailable, &unknown, 100, &[], OutputMode::Json, Some(3)).unwrap();
+        let parsed: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(parsed["unavailable"].as_array().unwrap().len(), 3);
+        assert_eq!(parsed["unknown"].as_array().unwrap().len(), 3);
+        assert_eq!(parsed["unavailable_count"], 10);
+        assert_eq!(parsed["unknown_count"], 5);
     }
 
     #[test]

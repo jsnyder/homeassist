@@ -57,25 +57,29 @@ pub fn format_output(data: &Value, mode: OutputMode) -> Result<String, AppError>
 }
 
 pub fn format_entity_list(entities: &[Value], mode: OutputMode, limit: Option<usize>) -> Result<String, AppError> {
+    let cap = limit.unwrap_or(entities.len());
+    let capped = &entities[..cap.min(entities.len())];
+
     match mode {
         OutputMode::Compact => {
-            let total = entities.len();
-            let cap = limit.unwrap_or(total);
-            let mut lines: Vec<String> = entities
+            let mut lines: Vec<String> = capped
                 .iter()
-                .take(cap)
                 .filter_map(|e| {
                     let id = e.get("entity_id")?.as_str()?;
                     let state = e.get("state")?.as_str().unwrap_or("unknown");
                     Some(format!("{id}\t{state}"))
                 })
                 .collect();
-            if total > cap {
-                lines.push(format!("[+{} more]", total - cap));
+            if entities.len() > cap {
+                lines.push(format!("[+{} more]", entities.len() - cap));
             }
             Ok(lines.join("\n"))
         }
-        _ => Ok(serde_json::to_string_pretty(entities)?),
+        OutputMode::Human => {
+            let s = crate::ui::Style::detect();
+            Ok(crate::ui::entity_table(capped, "Entities", &s))
+        }
+        OutputMode::Json => Ok(serde_json::to_string_pretty(capped)?),
     }
 }
 
@@ -207,6 +211,38 @@ mod tests {
         let output = format_entity_list(&entities, OutputMode::Compact, Some(50)).unwrap();
         assert!(!output.contains("+"));
         assert_eq!(output.lines().count(), 2);
+    }
+
+    #[test]
+    fn entity_list_human_mode_table() {
+        let entities = vec![
+            json!({"entity_id": "light.kitchen", "state": "on", "attributes": {"friendly_name": "Kitchen"}}),
+            json!({"entity_id": "sensor.temp", "state": "72.5", "attributes": {"friendly_name": "Temperature"}}),
+        ];
+        let output = format_entity_list(&entities, OutputMode::Human, None).unwrap();
+        assert!(output.contains("light.kitchen"));
+        assert!(output.contains("Kitchen"));
+        assert!(output.contains("2 entities"));
+    }
+
+    #[test]
+    fn entity_list_json_mode_respects_limit() {
+        let entities: Vec<Value> = (0..10)
+            .map(|i| json!({"entity_id": format!("sensor.s{i}"), "state": "on"}))
+            .collect();
+        let output = format_entity_list(&entities, OutputMode::Json, Some(3)).unwrap();
+        let parsed: Vec<Value> = serde_json::from_str(&output).unwrap();
+        assert_eq!(parsed.len(), 3);
+    }
+
+    #[test]
+    fn entity_list_human_mode_respects_limit() {
+        let entities: Vec<Value> = (0..10)
+            .map(|i| json!({"entity_id": format!("sensor.s{i}"), "state": "on", "attributes": {"friendly_name": format!("Sensor {i}")}}))
+            .collect();
+        let output = format_entity_list(&entities, OutputMode::Human, Some(3)).unwrap();
+        assert!(output.contains("3 entities"));
+        assert!(!output.contains("sensor.s9"));
     }
 
     #[test]
