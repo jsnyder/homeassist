@@ -55,3 +55,30 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
+
+  quorum:
+    name: quorum (local)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: quorum
+      - name: Install quorum
+        run: |
+          if ! command -v quorum &>/dev/null; then
+            cargo install --git https://github.com/jsnyder/quorum --locked
+          fi
+      - name: Review changed files
+        run: |
+          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.rs')
+          if [ -z "$FILES" ]; then
+            echo "No Rust files changed, skipping review"
+            exit 0
+          fi
+          git diff origin/${{ github.base_ref }}...HEAD > /tmp/changes.patch
+          quorum review $FILES --diff-file /tmp/changes.patch --compact --no-auto-calibrate || true
