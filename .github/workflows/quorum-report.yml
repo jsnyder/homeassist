@@ -57,13 +57,11 @@ jobs:
             } else {
               // Fork PRs: workflow_run.pull_requests is empty.
               // Search for the PR by head SHA via the API.
-              const { data: pulls } = await github.rest.pulls.list({
+              const pulls = await github.paginate(github.rest.pulls.list, {
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 state: 'open',
-                sort: 'updated',
-                direction: 'desc',
-                per_page: 30,
+                per_page: 100,
               });
               const match = pulls.find(pr => pr.head.sha === headSha);
               if (!match) {
@@ -123,7 +121,7 @@ jobs:
             });
 
             const existing = comments.find(c =>
-              c.user.type === 'Bot' && c.body.includes(QUORUM_MARKER)
+              c.user?.type === 'Bot' && c.body?.includes(QUORUM_MARKER)
             );
 
             if (existing) {

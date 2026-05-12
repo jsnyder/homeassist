@@ -60,21 +60,23 @@ jobs:
           fi
           echo "::notice::Running quorum in ${MODE} mode"
 
-          if quorum review $FILES \
+          set +e
+          quorum review $FILES \
             --diff-file /tmp/changes.patch \
             --compact \
             --no-auto-calibrate \
-            2>&1 | tee quorum-findings.txt; then
+            2>&1 | tee quorum-findings.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$EXIT_CODE" -eq 0 ]; then
             echo "clean" > quorum-status.txt
+          elif [ "$EXIT_CODE" -eq 1 ]; then
+            echo "warnings" > quorum-status.txt
+          elif [ "$EXIT_CODE" -eq 2 ]; then
+            echo "critical" > quorum-status.txt
           else
-            EXIT_CODE=$?
-            if [ "$EXIT_CODE" -eq 1 ]; then
-              echo "warnings" > quorum-status.txt
-            elif [ "$EXIT_CODE" -eq 2 ]; then
-              echo "critical" > quorum-status.txt
-            else
-              echo "error" > quorum-status.txt
-            fi
+            echo "error" > quorum-status.txt
           fi
 
       - uses: actions/upload-artifact@v4
