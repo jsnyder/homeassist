@@ -13,7 +13,7 @@ name: Quorum Analyze
 
 on:
   pull_request:
-    paths: ['**/*.rs', 'Cargo.toml', 'Cargo.lock']
+    paths: ['**/*.rs', '**/*.yml', '**/*.yaml', '**/*.py', '**/*.toml']
 
 permissions:
   contents: read
@@ -45,9 +45,9 @@ jobs:
           QUORUM_ALLOWED_BASE_URL_HOSTS: ${{ secrets.QUORUM_ALLOWED_BASE_URL_HOSTS }}
           BASE_REF: ${{ github.base_ref }}
         run: |
-          FILES=$(git diff --name-only "origin/${BASE_REF}...HEAD" -- '*.rs')
+          FILES=$(git diff --name-only "origin/${BASE_REF}...HEAD" -- '*.rs' '*.yml' '*.yaml' '*.py' '*.toml')
           if [ -z "$FILES" ]; then
-            echo "No Rust files changed" > quorum-findings.txt
+            echo "No reviewable files changed" > quorum-findings.txt
             echo "skip" > quorum-status.txt
             exit 0
           fi
