@@ -1,7 +1,7 @@
 use crate::client::HaClient;
 use crate::error::AppError;
 use crate::output::{format_output, OutputMode};
-use crate::validation::{parse_json_option, validate_service_format};
+use crate::validation::{parse_json_object_option, validate_service_format};
 use serde_json::json;
 
 pub async fn list(
@@ -65,14 +65,14 @@ pub async fn call(
     let (domain, service_name) = validate_service_format(service)?;
 
     let mut data = if let Some(d) = data_json {
-        parse_json_option(d, "data")?
+        parse_json_object_option(d, "data")?
     } else {
         json!({})
     };
 
     // Merge target into data
     if let Some(t) = target_json {
-        let target = parse_json_option(t, "target")?;
+        let target = parse_json_object_option(t, "target")?;
         if let (Some(data_obj), Some(target_obj)) = (data.as_object_mut(), target.as_object()) {
             for (k, v) in target_obj {
                 data_obj.insert(k.clone(), v.clone());

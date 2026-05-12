@@ -21,6 +21,9 @@ fn parse_batch_command(line: &str) -> Result<(String, Value), AppError> {
         .ok_or_else(|| AppError::Other("Missing 'command' field".into()))?
         .to_string();
     let args = cmd.get("args").cloned().unwrap_or(json!({}));
+    if !args.is_object() {
+        return Err(AppError::Other("'args' must be a JSON object".into()));
+    }
     Ok((command, args))
 }
 
@@ -188,6 +191,15 @@ mod tests {
     fn parse_batch_command_missing_command_field_errors() {
         let err = parse_batch_command(r#"{"args":{}}"#).unwrap_err();
         assert!(err.to_string().contains("command"));
+    }
+
+    #[test]
+    fn parse_batch_command_rejects_non_object_args() {
+        let err = parse_batch_command(r#"{"command":"health","args":"not_an_object"}"#).unwrap_err();
+        assert!(err.to_string().contains("args"), "should mention args in error: {err}");
+
+        let err = parse_batch_command(r#"{"command":"health","args":[1,2,3]}"#).unwrap_err();
+        assert!(err.to_string().contains("args"), "should mention args in error: {err}");
     }
 
     #[test]

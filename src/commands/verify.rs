@@ -270,12 +270,15 @@ fn load_and_compare_baseline(
     let content = std::fs::read_to_string(path).ok()?;
     let baseline: Value = serde_json::from_str(&content).ok()?;
 
-    let prev_unavailable = baseline.get("unavailable").and_then(|v| v.as_u64())? as i64;
-    let prev_unknown = baseline.get("unknown").and_then(|v| v.as_u64())? as i64;
+    let prev_unavailable = baseline.get("unavailable").and_then(|v| v.as_i64())?;
+    let prev_unknown = baseline.get("unknown").and_then(|v| v.as_i64())?;
+
+    let current_unavailable = i64::try_from(current_unavailable).ok()?;
+    let current_unknown = i64::try_from(current_unknown).ok()?;
 
     Some(json!({
-        "unavailable_delta": current_unavailable as i64 - prev_unavailable,
-        "unknown_delta": current_unknown as i64 - prev_unknown,
+        "unavailable_delta": current_unavailable - prev_unavailable,
+        "unknown_delta": current_unknown - prev_unknown,
         "baseline_file": path,
     }))
 }
@@ -310,6 +313,19 @@ mod tests {
             load_and_compare_baseline(tmp.to_str().unwrap(), 12, 3).unwrap();
         assert_eq!(delta["unavailable_delta"], 2);
         assert_eq!(delta["unknown_delta"], -2);
+
+        std::fs::remove_file(tmp).ok();
+    }
+
+    #[test]
+    fn baseline_large_values_no_overflow() {
+        let tmp = std::env::temp_dir().join("ha_test_baseline_large.json");
+        let large = u64::MAX;
+        std::fs::write(&tmp, format!(r#"{{"unavailable":{large},"unknown":0,"total":100}}"#)).unwrap();
+
+        // Should return None rather than wrapping/panicking
+        let result = load_and_compare_baseline(tmp.to_str().unwrap(), 10, 0);
+        assert!(result.is_none(), "should gracefully handle values exceeding i64 range");
 
         std::fs::remove_file(tmp).ok();
     }

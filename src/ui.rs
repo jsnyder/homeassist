@@ -140,7 +140,7 @@ pub fn fmt_num(n: usize) -> String {
 
 /// Format number for compact/LLM mode: 999 → "999", 10258 → "10.3k", 1200000 → "1.2M"
 pub fn fmt_num_compact(n: usize) -> String {
-    if n >= 1_000_000 {
+    if n >= 999_950 {
         format!("{:.1}M", n as f64 / 1_000_000.0)
     } else if n >= 1_000 {
         format!("{:.1}k", n as f64 / 1_000.0)
@@ -286,7 +286,13 @@ mod tests {
         assert_eq!(fmt_num_compact(1000), "1.0k");
         assert_eq!(fmt_num_compact(1500), "1.5k");
         assert_eq!(fmt_num_compact(10258), "10.3k");
-        assert_eq!(fmt_num_compact(999999), "1000.0k");
+    }
+
+    #[test]
+    fn fmt_num_compact_boundary_uses_m_not_1000k() {
+        assert_eq!(fmt_num_compact(999_949), "999.9k");
+        assert_eq!(fmt_num_compact(999_950), "1.0M");
+        assert_eq!(fmt_num_compact(999_999), "1.0M");
     }
 
     #[test]

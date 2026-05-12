@@ -8,10 +8,10 @@ fn sanitize_tsv_field(s: &str) -> String {
 }
 
 fn format_compact_entry(entry: &serde_json::Value) -> String {
-    let when = entry.get("when").and_then(|v| v.as_str()).unwrap_or("");
+    let when = sanitize_tsv_field(entry.get("when").and_then(|v| v.as_str()).unwrap_or(""));
     let name = sanitize_tsv_field(entry.get("name").and_then(|v| v.as_str()).unwrap_or(""));
     let message = sanitize_tsv_field(entry.get("message").and_then(|v| v.as_str()).unwrap_or(""));
-    let state = entry.get("state").and_then(|v| v.as_str()).unwrap_or("");
+    let state = sanitize_tsv_field(entry.get("state").and_then(|v| v.as_str()).unwrap_or(""));
     if state.is_empty() {
         format!("{when}\t{name}\t{message}")
     } else {
@@ -92,6 +92,15 @@ mod tests {
         assert!(!line.contains('\n'), "newlines in fields corrupt TSV rows");
         let fields: Vec<&str> = line.split('\t').collect();
         assert_eq!(fields.len(), 4, "tabs in fields corrupt TSV column count");
+    }
+
+    #[test]
+    fn compact_entry_sanitizes_when_and_state_fields() {
+        let entry = json!({"when": "2024\t01\t01", "name": "Light", "state": "on\noff", "message": ""});
+        let line = format_compact_entry(&entry);
+        assert!(!line.contains('\n'), "newlines in state corrupt TSV rows");
+        let fields: Vec<&str> = line.split('\t').collect();
+        assert_eq!(fields.len(), 4, "tabs in when/state corrupt TSV column count");
     }
 
     #[test]

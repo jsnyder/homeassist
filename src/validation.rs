@@ -76,6 +76,17 @@ pub fn parse_json_option(value: &str, option_name: &str) -> Result<serde_json::V
     })
 }
 
+pub fn parse_json_object_option(value: &str, option_name: &str) -> Result<serde_json::Value, AppError> {
+    let val = parse_json_option(value, option_name)?;
+    if !val.is_object() {
+        return Err(AppError::JsonParse {
+            option: option_name.into(),
+            message: "must be a JSON object".into(),
+        });
+    }
+    Ok(val)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,6 +205,24 @@ mod tests {
     fn parse_json_single_quotes_hint() {
         let err = parse_json_option("{'key': 'value'}", "data").unwrap_err();
         assert!(err.to_string().contains("double quotes"));
+    }
+
+    #[test]
+    fn parse_json_object_valid() {
+        let val = parse_json_object_option(r#"{"key":"value"}"#, "data").unwrap();
+        assert!(val.is_object());
+    }
+
+    #[test]
+    fn parse_json_object_rejects_array() {
+        let err = parse_json_object_option(r#"[1,2,3]"#, "data").unwrap_err();
+        assert!(err.to_string().contains("object"), "should mention object: {err}");
+    }
+
+    #[test]
+    fn parse_json_object_rejects_string() {
+        let err = parse_json_object_option(r#""hello""#, "target").unwrap_err();
+        assert!(err.to_string().contains("object"), "should mention object: {err}");
     }
 
     #[test]
