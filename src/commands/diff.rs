@@ -1,7 +1,7 @@
 use crate::client::HaClient;
 use crate::error::AppError;
-use crate::output::{format_output, OutputMode};
-use serde_json::{json, Value};
+use crate::output::{OutputMode, format_output};
+use serde_json::{Value, json};
 
 /// Show entities that changed state in the last N hours.
 /// Compares current state with the first recorded state in the history window.

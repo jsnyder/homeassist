@@ -1,6 +1,6 @@
 use crate::client::HaClient;
 use crate::error::AppError;
-use crate::output::{format_output, OutputMode};
+use crate::output::{OutputMode, format_output};
 use crate::validation::validate_reload_component;
 use serde_json::json;
 
@@ -32,8 +32,5 @@ pub async fn reload(
         reloaded.push("scenes");
     }
 
-    format_output(
-        &json!({ "success": true, "reloaded": reloaded }),
-        mode,
-    )
+    format_output(&json!({ "success": true, "reloaded": reloaded }), mode)
 }

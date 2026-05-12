@@ -8,7 +8,6 @@ pub mod ui;
 mod validation;
 pub mod ws;
 
-
 use clap::{Parser, Subcommand};
 use error::AppError;
 use output::OutputMode;
@@ -355,13 +354,24 @@ async fn run(cli: Cli, mode: OutputMode, limit: Option<usize>) -> Result<(), App
             // Validate can run without auth (local files only), but entity/registry/service checks need it
             let needs_auth = *check_entities || *check_registry || *check_services;
             let auth = if needs_auth {
-                Some(auth::resolve_auth(cli.url.as_deref(), cli.token.as_deref())?)
+                Some(auth::resolve_auth(
+                    cli.url.as_deref(),
+                    cli.token.as_deref(),
+                )?)
             } else {
                 None
             };
-            let client = auth.as_ref().map(|a| client::HaClient::new(a)).transpose()?;
-            let output =
-                commands::validate::run(client.as_ref(), path, *check_entities, *check_registry, *check_services, auth.as_ref(), mode).await?;
+            let client = auth.as_ref().map(client::HaClient::new).transpose()?;
+            let output = commands::validate::run(
+                client.as_ref(),
+                path,
+                *check_entities,
+                *check_registry,
+                *check_services,
+                auth.as_ref(),
+                mode,
+            )
+            .await?;
             if !output.is_empty() {
                 println!("{output}");
             }
@@ -481,21 +491,33 @@ async fn run(cli: Cli, mode: OutputMode, limit: Option<usize>) -> Result<(), App
             interval,
             state,
         } => {
-            commands::watch::entity(&client, &entity_id, timeout, interval, state.as_deref(), mode)
-                .await?
+            commands::watch::entity(
+                &client,
+                &entity_id,
+                timeout,
+                interval,
+                state.as_deref(),
+                mode,
+            )
+            .await?
         }
         Commands::Inspect => commands::inspect::triage(&client, mode, limit).await?,
         Commands::Verify { baseline } => {
             commands::verify::check(&client, &auth_config.url, baseline.as_deref(), mode).await?
         }
-        Commands::Health => {
-            commands::health::check(&client, &auth_config.url, mode).await?
-        }
+        Commands::Health => commands::health::check(&client, &auth_config.url, mode).await?,
         Commands::Stats { dashboard, init } => {
             if init {
                 commands::stats::init(&client).await?
             } else {
-                commands::stats::status(&client, &auth_config.url, &auth_config.token, dashboard.as_deref(), mode).await?
+                commands::stats::status(
+                    &client,
+                    &auth_config.url,
+                    &auth_config.token,
+                    dashboard.as_deref(),
+                    mode,
+                )
+                .await?
             }
         }
         Commands::Usage | Commands::Completions { .. } | Commands::Validate { .. } => {

@@ -3,27 +3,64 @@ use crate::error::AppError;
 use crate::output::OutputMode;
 use crate::ui;
 use crate::ws::HaWebSocket;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 
 // ── Init config constants ──────────────────────────────────────────
 
 /// Domains to exclude from auto-generated dashboard (noisy/meta).
 const INIT_EXCLUDED_DOMAINS: &[&str] = &[
-    "automation", "script", "scene", "device_tracker", "update",
-    "persistent_notification", "sun", "weather", "zone", "person",
-    "input_boolean", "input_number", "input_text", "input_select",
-    "input_datetime", "input_button", "counter", "timer", "group",
-    "schedule", "tag", "number", "select", "button", "event",
-    "conversation", "stt", "tts", "wake_word", "todo", "image",
-    "calendar", "date", "datetime", "text", "time",
+    "automation",
+    "script",
+    "scene",
+    "device_tracker",
+    "update",
+    "persistent_notification",
+    "sun",
+    "weather",
+    "zone",
+    "person",
+    "input_boolean",
+    "input_number",
+    "input_text",
+    "input_select",
+    "input_datetime",
+    "input_button",
+    "counter",
+    "timer",
+    "group",
+    "schedule",
+    "tag",
+    "number",
+    "select",
+    "button",
+    "event",
+    "conversation",
+    "stt",
+    "tts",
+    "wake_word",
+    "todo",
+    "image",
+    "calendar",
+    "date",
+    "datetime",
+    "text",
+    "time",
 ];
 
 /// Domains shown first in generated config.
 const INIT_PRIORITY_DOMAINS: &[&str] = &[
-    "climate", "light", "switch", "lock", "cover", "fan",
-    "media_player", "camera", "alarm_control_panel",
-    "binary_sensor", "sensor",
+    "climate",
+    "light",
+    "switch",
+    "lock",
+    "cover",
+    "fan",
+    "media_player",
+    "camera",
+    "alarm_control_panel",
+    "binary_sensor",
+    "sensor",
 ];
 
 // ── Init config generation (pure, testable) ────────────────────────
@@ -181,7 +218,9 @@ fn format_section_human(
     let mut out = format!("\n{}\n\n", s.header(name));
     for (id, state, unit) in entities {
         let (color, reset) = ui::state_color(state, &s);
-        let unit_str = unit.map(|u| format!("  {}{u}{}", s.dim, s.reset)).unwrap_or_default();
+        let unit_str = unit
+            .map(|u| format!("  {}{u}{}", s.dim, s.reset))
+            .unwrap_or_default();
         out.push_str(&format!(
             "  {:<35} {color}{:<12}{reset}{unit_str}\n",
             id, state,
@@ -282,7 +321,10 @@ fn format_human(stats: &SystemStats) -> String {
         ),
         (
             "Automations",
-            format!("{} on / {} off", stats.automations_on, stats.automations_off),
+            format!(
+                "{} on / {} off",
+                stats.automations_on, stats.automations_off
+            ),
             "Scripts",
             ui::fmt_num(stats.scripts),
         ),
@@ -300,7 +342,14 @@ fn format_human(stats: &SystemStats) -> String {
     for (lk, lv, rk, rv) in &rows {
         out.push_str(&format!(
             "  {}{:<w$}{}  {:<17}  {}{:<w$}{}  {}\n",
-            s.dim, lk, s.reset, lv, s.dim, rk, s.reset, rv,
+            s.dim,
+            lk,
+            s.reset,
+            lv,
+            s.dim,
+            rk,
+            s.reset,
+            rv,
             w = w,
         ));
     }
@@ -359,14 +408,10 @@ pub async fn status(
 ) -> Result<String, AppError> {
     let human = mode == OutputMode::Human;
 
-    let (config, states) = ui::with_spinner(
-        "Loading system status\u{2026}",
-        human,
-        async {
-            let (c, s) = tokio::join!(client.get_config(), client.get_states());
-            Ok::<(Value, Vec<Value>), AppError>((c?, s?))
-        },
-    )
+    let (config, states) = ui::with_spinner("Loading system status\u{2026}", human, async {
+        let (c, s) = tokio::join!(client.get_config(), client.get_states());
+        Ok::<(Value, Vec<Value>), AppError>((c?, s?))
+    })
     .await?;
 
     let version = config
@@ -398,10 +443,7 @@ pub async fn status(
             .get("entity_id")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let state = entity
-            .get("state")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let state = entity.get("state").and_then(|v| v.as_str()).unwrap_or("");
 
         match state {
             "unavailable" => unavailable += 1,
@@ -522,17 +564,17 @@ pub async fn status(
             match mode {
                 OutputMode::Compact => {
                     result.push('\n');
-                    result.push_str(&format_section_compact(&section.name, &ent_refs, &tmpl_refs));
+                    result.push_str(&format_section_compact(
+                        &section.name,
+                        &ent_refs,
+                        &tmpl_refs,
+                    ));
                 }
                 OutputMode::Human => {
                     result.push_str(&format_section_human(&section.name, &ent_refs, &tmpl_refs));
                 }
                 OutputMode::Json => {
-                    json_sections.push(format_section_json(
-                        &section.name,
-                        &ent_refs,
-                        &tmpl_refs,
-                    ));
+                    json_sections.push(format_section_json(&section.name, &ent_refs, &tmpl_refs));
                 }
             }
         }

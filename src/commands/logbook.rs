@@ -1,6 +1,6 @@
 use crate::client::HaClient;
 use crate::error::AppError;
-use crate::output::{format_output, OutputMode};
+use crate::output::{OutputMode, format_output};
 use serde_json::json;
 
 fn sanitize_tsv_field(s: &str) -> String {
@@ -41,11 +41,7 @@ fn format_logbook_output(
     let cap = limit.unwrap_or(total);
 
     if mode == OutputMode::Compact {
-        let mut lines: Vec<String> = entries
-            .iter()
-            .take(cap)
-            .map(format_compact_entry)
-            .collect();
+        let mut lines: Vec<String> = entries.iter().take(cap).map(format_compact_entry).collect();
         if total > cap {
             lines.push(format!("[+{} more]", total - cap));
         }
@@ -73,7 +69,9 @@ mod tests {
         let entries: Vec<serde_json::Value> = (0..10)
             .map(|i| json!({"when": format!("2024-01-01T{i:02}:00:00"), "name": format!("Event {i}"), "state": "on", "message": ""}))
             .collect();
-        let output = super::format_logbook_output("sensor.test", 24, &entries, OutputMode::Json, Some(3)).unwrap();
+        let output =
+            super::format_logbook_output("sensor.test", 24, &entries, OutputMode::Json, Some(3))
+                .unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
         assert_eq!(parsed["entries"].as_array().unwrap().len(), 3);
     }
@@ -96,11 +94,16 @@ mod tests {
 
     #[test]
     fn compact_entry_sanitizes_when_and_state_fields() {
-        let entry = json!({"when": "2024\t01\t01", "name": "Light", "state": "on\noff", "message": ""});
+        let entry =
+            json!({"when": "2024\t01\t01", "name": "Light", "state": "on\noff", "message": ""});
         let line = format_compact_entry(&entry);
         assert!(!line.contains('\n'), "newlines in state corrupt TSV rows");
         let fields: Vec<&str> = line.split('\t').collect();
-        assert_eq!(fields.len(), 4, "tabs in when/state corrupt TSV column count");
+        assert_eq!(
+            fields.len(),
+            4,
+            "tabs in when/state corrupt TSV column count"
+        );
     }
 
     #[test]

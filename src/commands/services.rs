@@ -1,6 +1,6 @@
 use crate::client::HaClient;
 use crate::error::AppError;
-use crate::output::{format_output, OutputMode};
+use crate::output::{OutputMode, format_output};
 use crate::validation::{parse_json_object_option, validate_service_format};
 use serde_json::json;
 
@@ -23,12 +23,7 @@ pub async fn list(
                                 let fields = svc
                                     .get("fields")
                                     .and_then(|f| f.as_object())
-                                    .map(|f| {
-                                        f.keys()
-                                            .cloned()
-                                            .collect::<Vec<_>>()
-                                            .join(", ")
-                                    })
+                                    .map(|f| f.keys().cloned().collect::<Vec<_>>().join(", "))
                                     .unwrap_or_default();
                                 format!("{d}.{name}({fields})")
                             })
@@ -42,7 +37,11 @@ pub async fn list(
         } else {
             let mut domains: Vec<&String> = map.keys().collect();
             domains.sort();
-            Ok(domains.iter().map(|d| d.as_str()).collect::<Vec<_>>().join("\n"))
+            Ok(domains
+                .iter()
+                .map(|d| d.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"))
         }
     } else if let Some(d) = domain {
         if let Some(svcs) = map.get(d) {
