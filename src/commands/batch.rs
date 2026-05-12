@@ -1,7 +1,7 @@
 use crate::client::HaClient;
 use crate::error::AppError;
 use crate::output::OutputMode;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::BufRead;
 
 fn collect_lines<I>(iter: I) -> Result<Vec<String>, AppError>
@@ -13,8 +13,8 @@ where
 }
 
 fn parse_batch_command(line: &str) -> Result<(String, Value), AppError> {
-    let cmd: Value = serde_json::from_str(line)
-        .map_err(|e| AppError::Other(format!("Invalid JSON: {e}")))?;
+    let cmd: Value =
+        serde_json::from_str(line).map_err(|e| AppError::Other(format!("Invalid JSON: {e}")))?;
     let command = cmd
         .get("command")
         .and_then(|v| v.as_str())
@@ -174,7 +174,8 @@ mod tests {
     fn parse_batch_command_with_args() {
         let (cmd, args) = parse_batch_command(
             r#"{"command":"entities.get","args":{"entity_id":"light.kitchen"}}"#,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(cmd, "entities.get");
         assert_eq!(args["entity_id"], "light.kitchen");
     }
@@ -195,11 +196,18 @@ mod tests {
 
     #[test]
     fn parse_batch_command_rejects_non_object_args() {
-        let err = parse_batch_command(r#"{"command":"health","args":"not_an_object"}"#).unwrap_err();
-        assert!(err.to_string().contains("args"), "should mention args in error: {err}");
+        let err =
+            parse_batch_command(r#"{"command":"health","args":"not_an_object"}"#).unwrap_err();
+        assert!(
+            err.to_string().contains("args"),
+            "should mention args in error: {err}"
+        );
 
         let err = parse_batch_command(r#"{"command":"health","args":[1,2,3]}"#).unwrap_err();
-        assert!(err.to_string().contains("args"), "should mention args in error: {err}");
+        assert!(
+            err.to_string().contains("args"),
+            "should mention args in error: {err}"
+        );
     }
 
     #[test]
@@ -210,10 +218,7 @@ mod tests {
 
     #[test]
     fn collect_lines_propagates_errors() {
-        let lines = vec![
-            Ok("line1".to_string()),
-            Ok("line2".to_string()),
-        ];
+        let lines = vec![Ok("line1".to_string()), Ok("line2".to_string())];
         let result = collect_lines(lines.into_iter());
         assert_eq!(result.unwrap(), vec!["line1", "line2"]);
     }
@@ -222,7 +227,7 @@ mod tests {
     fn collect_lines_returns_error_on_io_failure() {
         let lines: Vec<Result<String, std::io::Error>> = vec![
             Ok("line1".to_string()),
-            Err(std::io::Error::new(std::io::ErrorKind::Other, "read failed")),
+            Err(std::io::Error::other("read failed")),
             Ok("line3".to_string()),
         ];
         let result = collect_lines(lines.into_iter());

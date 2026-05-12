@@ -13,7 +13,16 @@ pub fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
     let month_days = [
         31,
         if leap { 29 } else { 28 },
-        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
     ];
     let mut month = 1u64;
     for &md in &month_days {

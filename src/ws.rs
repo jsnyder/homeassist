@@ -1,6 +1,6 @@
 use crate::error::AppError;
 use futures_util::{SinkExt, StreamExt};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
@@ -34,9 +34,9 @@ impl HaWebSocket {
             .replace("https://", "wss://");
         let ws_url = format!("{ws_url}/api/websocket");
 
-        let (ws_stream, _) = connect_async(&ws_url).await.map_err(|e| {
-            AppError::Other(format!("WebSocket connection failed: {e}"))
-        })?;
+        let (ws_stream, _) = connect_async(&ws_url)
+            .await
+            .map_err(|e| AppError::Other(format!("WebSocket connection failed: {e}")))?;
 
         let (write, read) = ws_stream.split();
         let mut ws = Self {
@@ -156,18 +156,14 @@ impl HaWebSocket {
 
     async fn recv(&mut self) -> Result<Value, AppError> {
         loop {
-            let next = tokio::time::timeout(
-                std::time::Duration::from_secs(30),
-                self.read.next(),
-            )
-            .await
-            .map_err(|_| AppError::Other("WebSocket receive timed out".to_string()))?;
+            let next = tokio::time::timeout(std::time::Duration::from_secs(30), self.read.next())
+                .await
+                .map_err(|_| AppError::Other("WebSocket receive timed out".to_string()))?;
 
             match next {
                 Some(Ok(Message::Text(text))) => {
-                    return serde_json::from_str(&text).map_err(|e| {
-                        AppError::Other(format!("WebSocket JSON parse failed: {e}"))
-                    });
+                    return serde_json::from_str(&text)
+                        .map_err(|e| AppError::Other(format!("WebSocket JSON parse failed: {e}")));
                 }
                 Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => continue,
                 Some(Ok(Message::Close(_))) => {
@@ -212,18 +208,24 @@ mod tests {
             }
 
             // Step 1: Send auth_required
-            ws_send!(write, json!({"type": "auth_required", "ha_version": "2024.3.0"}));
+            ws_send!(
+                write,
+                json!({"type": "auth_required", "ha_version": "2024.3.0"})
+            );
 
             // Step 2: Read auth message
             let msg = read.next().await.unwrap().unwrap();
-            let auth: serde_json::Value = serde_json::from_str(&msg.to_text().unwrap()).unwrap();
+            let auth: serde_json::Value = serde_json::from_str(msg.to_text().unwrap()).unwrap();
             assert_eq!(auth["type"], "auth");
 
             // Step 3: Send auth_ok or auth_invalid
             if accept_auth {
                 ws_send!(write, json!({"type": "auth_ok", "ha_version": "2024.3.0"}));
             } else {
-                ws_send!(write, json!({"type": "auth_invalid", "message": "Invalid access token"}));
+                ws_send!(
+                    write,
+                    json!({"type": "auth_invalid", "message": "Invalid access token"})
+                );
                 return;
             }
 
@@ -249,12 +251,15 @@ mod tests {
                         _ => json!(null),
                     };
 
-                    ws_send!(write, json!({
-                        "id": id,
-                        "type": "result",
-                        "success": true,
-                        "result": result,
-                    }));
+                    ws_send!(
+                        write,
+                        json!({
+                            "id": id,
+                            "type": "result",
+                            "success": true,
+                            "result": result,
+                        })
+                    );
                 }
             }
         });
@@ -315,7 +320,9 @@ mod tests {
         let mut ws = HaWebSocket::connect(&url, "test-token").await.unwrap();
         let result = ws.command("system_log/list").await.unwrap();
 
-        let entries = result.as_array().expect("Should return array of log entries");
+        let entries = result
+            .as_array()
+            .expect("Should return array of log entries");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0]["level"], "ERROR");
         assert_eq!(entries[0]["name"], "homeassistant.core");

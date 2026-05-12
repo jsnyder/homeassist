@@ -9,14 +9,16 @@ pub struct AuthConfig {
 }
 
 /// Resolve auth from flag > env > file chain
-pub fn resolve_auth(url_flag: Option<&str>, token_flag: Option<&str>) -> Result<AuthConfig, AppError> {
+pub fn resolve_auth(
+    url_flag: Option<&str>,
+    token_flag: Option<&str>,
+) -> Result<AuthConfig, AppError> {
     let url = url_flag
         .map(String::from)
         .or_else(|| std::env::var("HA_URL").ok());
     let url = match url {
         Some(u) => u,
-        None => read_token_file("~/.ha_url", false)?
-            .ok_or(AppError::MissingUrl)?,
+        None => read_token_file("~/.ha_url", false)?.ok_or(AppError::MissingUrl)?,
     };
 
     let token = token_flag
@@ -24,8 +26,7 @@ pub fn resolve_auth(url_flag: Option<&str>, token_flag: Option<&str>) -> Result<
         .or_else(|| std::env::var("HA_TOKEN").ok());
     let token = match token {
         Some(t) => t,
-        None => read_token_file("~/.ha_token", true)?
-            .ok_or(AppError::MissingToken)?,
+        None => read_token_file("~/.ha_token", true)?.ok_or(AppError::MissingToken)?,
     };
 
     Ok(AuthConfig {
@@ -83,9 +84,7 @@ fn expand_tilde(path: &str) -> PathBuf {
 }
 
 fn dirs_home() -> Option<PathBuf> {
-    std::env::var("HOME")
-        .ok()
-        .map(PathBuf::from)
+    std::env::var("HOME").ok().map(PathBuf::from)
 }
 
 #[cfg(test)]
@@ -162,8 +161,12 @@ mod tests {
         fs::write(&token_path, "  file-token  \n").unwrap();
 
         // Actually call read_token_file (not fs::read_to_string)
-        let url = read_token_file(url_path.to_str().unwrap(), false).unwrap().unwrap();
-        let token = read_token_file(token_path.to_str().unwrap(), false).unwrap().unwrap();
+        let url = read_token_file(url_path.to_str().unwrap(), false)
+            .unwrap()
+            .unwrap();
+        let token = read_token_file(token_path.to_str().unwrap(), false)
+            .unwrap()
+            .unwrap();
         assert_eq!(url, "http://file-ha:8123");
         assert_eq!(token, "file-token");
     }

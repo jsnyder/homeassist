@@ -1,9 +1,9 @@
 use crate::client::HaClient;
 use crate::error::AppError;
-use crate::output::{format_entity_list, format_output, OutputMode};
+use crate::output::{OutputMode, format_entity_list, format_output};
 use crate::ui;
 use crate::validation::safe_regex;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub async fn list(
     client: &HaClient,
@@ -69,11 +69,7 @@ pub async fn list(
     }
 }
 
-pub async fn get(
-    client: &HaClient,
-    entity_id: &str,
-    mode: OutputMode,
-) -> Result<String, AppError> {
+pub async fn get(client: &HaClient, entity_id: &str, mode: OutputMode) -> Result<String, AppError> {
     let state = client.get_state(entity_id).await?;
 
     if mode == OutputMode::Compact {

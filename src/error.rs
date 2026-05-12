@@ -20,7 +20,9 @@ pub enum AppError {
     #[error("Invalid JSON for --{option}: {message}")]
     JsonParse { option: String, message: String },
 
-    #[error("Invalid service format: \"{input}\". Expected format: domain.service (e.g., light.turn_on)")]
+    #[error(
+        "Invalid service format: \"{input}\". Expected format: domain.service (e.g., light.turn_on)"
+    )]
     InvalidServiceFormat { input: String },
 
     #[error("Invalid component: \"{input}\". Valid options: automations, scripts, scenes, all")]
@@ -84,7 +86,10 @@ impl From<reqwest::Error> for AppError {
         } else if let Some(status) = err.status() {
             AppError::Http {
                 status: status.as_u16(),
-                message: status.canonical_reason().unwrap_or("Request failed").to_string(),
+                message: status
+                    .canonical_reason()
+                    .unwrap_or("Request failed")
+                    .to_string(),
             }
         } else {
             AppError::Other(err.to_string())
@@ -145,9 +150,14 @@ mod tests {
 
     #[test]
     fn connection_error_is_sanitized() {
-        let err = AppError::Connection("reqwest::Error { kind: Connect, url: https://internal.host:8123 }".into());
+        let err = AppError::Connection(
+            "reqwest::Error { kind: Connect, url: https://internal.host:8123 }".into(),
+        );
         // Display output should NOT contain the raw reqwest details
-        assert_eq!(err.to_string(), "Connection failed: unable to reach Home Assistant");
+        assert_eq!(
+            err.to_string(),
+            "Connection failed: unable to reach Home Assistant"
+        );
     }
 
     #[test]

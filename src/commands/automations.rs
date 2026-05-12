@@ -1,9 +1,13 @@
 use crate::client::HaClient;
 use crate::error::AppError;
-use crate::output::{format_entity_list, format_output, OutputMode};
-use serde_json::{json, Value};
+use crate::output::{OutputMode, format_entity_list, format_output};
+use serde_json::{Value, json};
 
-pub async fn list(client: &HaClient, mode: OutputMode, limit: Option<usize>) -> Result<String, AppError> {
+pub async fn list(
+    client: &HaClient,
+    mode: OutputMode,
+    limit: Option<usize>,
+) -> Result<String, AppError> {
     let states = client.get_states().await?;
     let automations: Vec<Value> = states
         .into_iter()
@@ -38,16 +42,15 @@ pub async fn trigger(
     mode: OutputMode,
 ) -> Result<String, AppError> {
     let data = json!({ "entity_id": entity_id });
-    client
-        .call_service("automation", "trigger", data)
-        .await?;
-    format_output(
-        &json!({ "success": true, "triggered": entity_id }),
-        mode,
-    )
+    client.call_service("automation", "trigger", data).await?;
+    format_output(&json!({ "success": true, "triggered": entity_id }), mode)
 }
 
-pub async fn scripts_list(client: &HaClient, mode: OutputMode, limit: Option<usize>) -> Result<String, AppError> {
+pub async fn scripts_list(
+    client: &HaClient,
+    mode: OutputMode,
+    limit: Option<usize>,
+) -> Result<String, AppError> {
     let states = client.get_states().await?;
     let scripts: Vec<Value> = states
         .into_iter()
@@ -79,9 +82,11 @@ fn validate_script_id(entity_id: &str) -> Result<&str, AppError> {
     entity_id
         .strip_prefix("script.")
         .filter(|name| !name.is_empty())
-        .ok_or_else(|| AppError::Other(format!(
-            "Invalid script entity ID: \"{entity_id}\". Expected format: script.<name>"
-        )))
+        .ok_or_else(|| {
+            AppError::Other(format!(
+                "Invalid script entity ID: \"{entity_id}\". Expected format: script.<name>"
+            ))
+        })
 }
 
 pub async fn scripts_run(
@@ -91,13 +96,8 @@ pub async fn scripts_run(
 ) -> Result<String, AppError> {
     let script_name = validate_script_id(entity_id)?;
     let data = json!({});
-    client
-        .call_service("script", script_name, data)
-        .await?;
-    format_output(
-        &json!({ "success": true, "ran": entity_id }),
-        mode,
-    )
+    client.call_service("script", script_name, data).await?;
+    format_output(&json!({ "success": true, "ran": entity_id }), mode)
 }
 
 #[cfg(test)]
@@ -124,7 +124,10 @@ mod tests {
     #[test]
     fn validate_script_id_accepts_valid_script_ids() {
         assert_eq!(validate_script_id("script.my_script").unwrap(), "my_script");
-        assert_eq!(validate_script_id("script.morning_routine").unwrap(), "morning_routine");
+        assert_eq!(
+            validate_script_id("script.morning_routine").unwrap(),
+            "morning_routine"
+        );
     }
 
     #[test]

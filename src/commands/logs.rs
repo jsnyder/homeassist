@@ -1,9 +1,9 @@
 use crate::client::HaClient;
 use crate::error::AppError;
-use crate::output::{format_output, OutputMode};
+use crate::output::{OutputMode, format_output};
 use crate::validation::safe_regex;
 use crate::ws::HaWebSocket;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Format a single structured log entry from system_log/list into a readable line.
 fn format_log_entry(entry: &Value) -> String {
@@ -20,10 +20,7 @@ fn format_log_entry(entry: &Value) -> String {
         Some(Value::Array(arr)) => arr.first().and_then(Value::as_str).unwrap_or(""),
         _ => "",
     };
-    let count = entry
-        .get("count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(1);
+    let count = entry.get("count").and_then(|v| v.as_u64()).unwrap_or(1);
 
     if count > 1 {
         format!("{level} ({name}) [{count}x]: {message}")
@@ -97,7 +94,7 @@ mod tests {
 
     #[test]
     fn tail_limits_output() {
-        let lines = vec!["a", "b", "c", "d", "e"];
+        let lines = ["a", "b", "c", "d", "e"];
         let n = 3usize;
         let start = lines.len().saturating_sub(n);
         let result = &lines[start..];
@@ -106,7 +103,7 @@ mod tests {
 
     #[test]
     fn tail_larger_than_input() {
-        let lines = vec!["a", "b"];
+        let lines = ["a", "b"];
         let n = 10usize;
         let start = lines.len().saturating_sub(n);
         let result = &lines[start..];
@@ -128,7 +125,10 @@ mod tests {
         let line = format_log_entry(&entry);
         assert!(line.contains("ERROR"), "Should include level");
         assert!(line.contains("zwave_js"), "Should include component name");
-        assert!(line.contains("Node 5 is not responding"), "Should include message");
+        assert!(
+            line.contains("Node 5 is not responding"),
+            "Should include message"
+        );
     }
 
     #[test]

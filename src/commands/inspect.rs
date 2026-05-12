@@ -1,14 +1,18 @@
 use crate::client::HaClient;
 use crate::error::AppError;
-use crate::output::{format_output, OutputMode};
+use crate::output::{OutputMode, format_output};
 use crate::ui;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn extract_domain(entity_id: &str) -> Option<&str> {
     entity_id.split('.').next().filter(|d| !d.is_empty())
 }
 
-pub async fn triage(client: &HaClient, mode: OutputMode, limit: Option<usize>) -> Result<String, AppError> {
+pub async fn triage(
+    client: &HaClient,
+    mode: OutputMode,
+    limit: Option<usize>,
+) -> Result<String, AppError> {
     let human = mode == OutputMode::Human;
     let states: Vec<Value> =
         ui::with_spinner("Loading entities\u{2026}", human, client.get_states()).await?;
@@ -23,10 +27,7 @@ pub async fn triage(client: &HaClient, mode: OutputMode, limit: Option<usize>) -
             .get("entity_id")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let state = entity
-            .get("state")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let state = entity.get("state").and_then(|v| v.as_str()).unwrap_or("");
 
         if let Some(domain) = extract_domain(entity_id) {
             *domain_counts.entry(domain.to_string()).or_insert(0) += 1;
@@ -111,10 +112,18 @@ fn format_triage_output(
         let s = ui::Style::detect();
         let mut out = format!(
             "{}\n\n",
-            s.header(&format!("System Health \u{2014} {} entities", ui::fmt_num(total_entities)))
+            s.header(&format!(
+                "System Health \u{2014} {} entities",
+                ui::fmt_num(total_entities)
+            ))
         );
 
-        let name_w = domains.iter().map(|(k, _)| k.len()).max().unwrap_or(10).max(6);
+        let name_w = domains
+            .iter()
+            .map(|(k, _)| k.len())
+            .max()
+            .unwrap_or(10)
+            .max(6);
         out.push_str(&format!(
             "  {}{:<name_w$}  {:>6}{}\n",
             s.dim, "Domain", "Count", s.reset,
@@ -179,7 +188,10 @@ mod tests {
 
     #[test]
     fn extract_domain_from_entity_id() {
-        assert_eq!(extract_domain("sensor.living_room_temperature"), Some("sensor"));
+        assert_eq!(
+            extract_domain("sensor.living_room_temperature"),
+            Some("sensor")
+        );
         assert_eq!(extract_domain("light.kitchen"), Some("light"));
     }
 
@@ -191,7 +203,15 @@ mod tests {
         let unknown: Vec<Value> = (0..5)
             .map(|i| json!({"entity_id": format!("sensor.k{i}"), "friendly_name": format!("Unknown {i}")}))
             .collect();
-        let output = super::format_triage_output(&unavailable, &unknown, 100, &[], OutputMode::Json, Some(3)).unwrap();
+        let output = super::format_triage_output(
+            &unavailable,
+            &unknown,
+            100,
+            &[],
+            OutputMode::Json,
+            Some(3),
+        )
+        .unwrap();
         let parsed: Value = serde_json::from_str(&output).unwrap();
         assert_eq!(parsed["unavailable"].as_array().unwrap().len(), 3);
         assert_eq!(parsed["unknown"].as_array().unwrap().len(), 3);

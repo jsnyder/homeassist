@@ -1,6 +1,6 @@
 use crate::auth::AuthConfig;
 use crate::error::AppError;
-use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -43,7 +43,10 @@ impl HaClient {
             return Err(AppError::Http {
                 status: status.as_u16(),
                 message: if text.is_empty() {
-                    status.canonical_reason().unwrap_or("Request failed").to_string()
+                    status
+                        .canonical_reason()
+                        .unwrap_or("Request failed")
+                        .to_string()
                 } else {
                     text
                 },
@@ -145,21 +148,14 @@ impl HaClient {
         let resp = self
             .client
             .get(&url)
-            .query(&[
-                ("filter_entity_id", entity_id),
-                ("minimal_response", ""),
-            ])
+            .query(&[("filter_entity_id", entity_id), ("minimal_response", "")])
             .send()
             .await?;
         let resp = self.check_response(resp).await?;
         resp.json().await.map_err(Into::into)
     }
 
-    pub async fn get_logbook(
-        &self,
-        entity_id: &str,
-        hours: u32,
-    ) -> Result<Vec<Value>, AppError> {
+    pub async fn get_logbook(&self, entity_id: &str, hours: u32) -> Result<Vec<Value>, AppError> {
         let start = chrono_offset(hours)?;
         let url = format!("{}/api/logbook/{start}", self.base_url);
         let resp = self
@@ -172,11 +168,7 @@ impl HaClient {
         resp.json().await.map_err(Into::into)
     }
 
-    pub async fn fire_event(
-        &self,
-        event_type: &str,
-        data: Value,
-    ) -> Result<Value, AppError> {
+    pub async fn fire_event(&self, event_type: &str, data: Value) -> Result<Value, AppError> {
         let encoded = encode_path_segment(event_type);
         self.post(&format!("/events/{encoded}"), &data).await
     }
@@ -203,10 +195,7 @@ pub fn chrono_offset_public(hours: u32) -> Result<String, AppError> {
 
 /// Encode a URL path segment, preserving RFC 3986 unreserved characters.
 /// Encodes everything except alphanumerics, underscores, hyphens, tildes, and periods.
-const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
-    .remove(b'_')
-    .remove(b'-')
-    .remove(b'~');
+const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC.remove(b'_').remove(b'-').remove(b'~');
 
 fn encode_path_segment(s: &str) -> String {
     utf8_percent_encode(s, PATH_SEGMENT_ENCODE_SET).to_string()

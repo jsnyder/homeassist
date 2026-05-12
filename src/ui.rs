@@ -1,6 +1,6 @@
 use std::io::IsTerminal;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// Terminal styling — returns empty strings when stdout is not a TTY.
@@ -106,11 +106,7 @@ where
         let frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
         let mut i = 0usize;
         while r.load(Ordering::Relaxed) {
-            eprint!(
-                "\r\x1b[2m{} {}\x1b[0m\x1b[K",
-                frames[i % frames.len()],
-                msg
-            );
+            eprint!("\r\x1b[2m{} {}\x1b[0m\x1b[K", frames[i % frames.len()], msg);
             i = i.wrapping_add(1);
             tokio::time::sleep(Duration::from_millis(80)).await;
         }
@@ -180,11 +176,7 @@ pub fn state_color<'a>(state: &str, s: &'a Style) -> (&'a str, &'a str) {
 }
 
 /// Render entities as an aligned table.
-pub fn entity_table(
-    entities: &[serde_json::Value],
-    title: &str,
-    s: &Style,
-) -> String {
+pub fn entity_table(entities: &[serde_json::Value], title: &str, s: &Style) -> String {
     let mut out = format!("{}\n\n", s.header(title));
 
     if entities.is_empty() {
@@ -196,10 +188,7 @@ pub fn entity_table(
     let rows: Vec<(&str, &str, &str)> = entities
         .iter()
         .map(|e| {
-            let id = e
-                .get("entity_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let id = e.get("entity_id").and_then(|v| v.as_str()).unwrap_or("");
             let state = e.get("state").and_then(|v| v.as_str()).unwrap_or("");
             let name = e
                 .pointer("/attributes/friendly_name")
@@ -217,8 +206,7 @@ pub fn entity_table(
         .map(|r| r.1.len())
         .max()
         .unwrap_or(5)
-        .max(5)
-        .min(14);
+        .clamp(5, 14);
 
     // Header row
     out.push_str(&format!(

@@ -1,8 +1,8 @@
 use crate::client::HaClient;
 use crate::error::AppError;
-use crate::output::{format_output, OutputMode};
+use crate::output::{OutputMode, format_output};
 use crate::ui;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub async fn check(
     client: &HaClient,
@@ -12,16 +12,9 @@ pub async fn check(
 ) -> Result<String, AppError> {
     // Run all checks concurrently
     let human = mode == OutputMode::Human;
-    let (config_result, states_result) = ui::with_spinner(
-        "Running checks\u{2026}",
-        human,
-        async {
-            tokio::join!(
-                client.get_config(),
-                client.get_states(),
-            )
-        },
-    )
+    let (config_result, states_result) = ui::with_spinner("Running checks\u{2026}", human, async {
+        tokio::join!(client.get_config(), client.get_states(),)
+    })
     .await;
 
     let config: Value = config_result?;
@@ -52,9 +45,10 @@ pub async fn check(
         std::collections::HashMap::new();
     for entity in &states {
         if let Some(eid) = entity.get("entity_id").and_then(|v| v.as_str())
-            && let Some(domain) = eid.split('.').next() {
-                *domain_counts.entry(domain.to_string()).or_insert(0) += 1;
-            }
+            && let Some(domain) = eid.split('.').next()
+        {
+            *domain_counts.entry(domain.to_string()).or_insert(0) += 1;
+        }
     }
 
     // Automation states
@@ -74,10 +68,7 @@ pub async fn check(
 
     // Check for HA config validity
     let config_valid = match client.check_config().await {
-        Ok(result) => result
-            .get("result")
-            .and_then(|v| v.as_str())
-            == Some("valid"),
+        Ok(result) => result.get("result").and_then(|v| v.as_str()) == Some("valid"),
         Err(_) => false,
     };
 
@@ -103,11 +94,12 @@ pub async fn check(
     }
     if let Some(ref delta) = baseline_delta
         && let Some(new_unavail) = delta.get("unavailable_delta").and_then(|v| v.as_i64())
-            && new_unavail > 5 {
-                issues.push(format!(
-                    "Unavailable entities increased by {new_unavail} since baseline"
-                ));
-            }
+        && new_unavail > 5
+    {
+        issues.push(format!(
+            "Unavailable entities increased by {new_unavail} since baseline"
+        ));
+    }
 
     let passed = issues.is_empty();
 
@@ -150,10 +142,7 @@ pub async fn check(
             }
         }
         // Write snapshot to stderr for capture
-        eprintln!(
-            "{}",
-            serde_json::to_string(&snapshot).unwrap_or_default()
-        );
+        eprintln!("{}", serde_json::to_string(&snapshot).unwrap_or_default());
         Ok(lines.join("\n"))
     } else if mode == OutputMode::Human {
         let s = ui::Style::detect();
@@ -178,14 +167,20 @@ pub async fn check(
         if unavailable > 0 {
             out.push_str(&format!(
                 "  {:<w$}  {}{} unavailable{}\n",
-                "", ui::fmt_num(unavailable), s.reset, s.reset,
+                "",
+                ui::fmt_num(unavailable),
+                s.reset,
+                s.reset,
                 w = w,
             ));
         }
         if unknown > 0 {
             out.push_str(&format!(
                 "  {:<w$}  {}{} unknown{}\n",
-                "", ui::fmt_num(unknown), s.reset, s.reset,
+                "",
+                ui::fmt_num(unknown),
+                s.reset,
+                s.reset,
                 w = w,
             ));
         }
@@ -199,8 +194,12 @@ pub async fn check(
                 w,
                 &format!(
                     "{} on {}·{} {} off {}·{} {} total",
-                    automations_on, s.dim, s.reset,
-                    automations_off, s.dim, s.reset,
+                    automations_on,
+                    s.dim,
+                    s.reset,
+                    automations_off,
+                    s.dim,
+                    s.reset,
                     automations.len()
                 )
             )
@@ -309,8 +308,7 @@ mod tests {
         let tmp = std::env::temp_dir().join("ha_test_baseline.json");
         std::fs::write(&tmp, r#"{"unavailable":10,"unknown":5,"total":100}"#).unwrap();
 
-        let delta =
-            load_and_compare_baseline(tmp.to_str().unwrap(), 12, 3).unwrap();
+        let delta = load_and_compare_baseline(tmp.to_str().unwrap(), 12, 3).unwrap();
         assert_eq!(delta["unavailable_delta"], 2);
         assert_eq!(delta["unknown_delta"], -2);
 
@@ -321,11 +319,18 @@ mod tests {
     fn baseline_large_values_no_overflow() {
         let tmp = std::env::temp_dir().join("ha_test_baseline_large.json");
         let large = u64::MAX;
-        std::fs::write(&tmp, format!(r#"{{"unavailable":{large},"unknown":0,"total":100}}"#)).unwrap();
+        std::fs::write(
+            &tmp,
+            format!(r#"{{"unavailable":{large},"unknown":0,"total":100}}"#),
+        )
+        .unwrap();
 
         // Should return None rather than wrapping/panicking
         let result = load_and_compare_baseline(tmp.to_str().unwrap(), 10, 0);
-        assert!(result.is_none(), "should gracefully handle values exceeding i64 range");
+        assert!(
+            result.is_none(),
+            "should gracefully handle values exceeding i64 range"
+        );
 
         std::fs::remove_file(tmp).ok();
     }

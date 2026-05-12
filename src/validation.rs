@@ -22,8 +22,7 @@ pub fn safe_regex(pattern: &str, case_insensitive: bool) -> Result<Regex, AppErr
     } else {
         pattern.to_string()
     };
-    Regex::new(&pat)
-        .map_err(|e| AppError::InvalidPattern(e.to_string()))
+    Regex::new(&pat).map_err(|e| AppError::InvalidPattern(e.to_string()))
 }
 
 /// Validate a service name format (domain.service)
@@ -76,7 +75,10 @@ pub fn parse_json_option(value: &str, option_name: &str) -> Result<serde_json::V
     })
 }
 
-pub fn parse_json_object_option(value: &str, option_name: &str) -> Result<serde_json::Value, AppError> {
+pub fn parse_json_object_option(
+    value: &str,
+    option_name: &str,
+) -> Result<serde_json::Value, AppError> {
     let val = parse_json_option(value, option_name)?;
     if !val.is_object() {
         return Err(AppError::JsonParse {
@@ -172,8 +174,14 @@ mod tests {
 
     #[test]
     fn valid_reload_components() {
-        assert_eq!(validate_reload_component(Some("automations")).unwrap(), "automations");
-        assert_eq!(validate_reload_component(Some("scripts")).unwrap(), "scripts");
+        assert_eq!(
+            validate_reload_component(Some("automations")).unwrap(),
+            "automations"
+        );
+        assert_eq!(
+            validate_reload_component(Some("scripts")).unwrap(),
+            "scripts"
+        );
         assert_eq!(validate_reload_component(Some("scenes")).unwrap(), "scenes");
         assert_eq!(validate_reload_component(Some("all")).unwrap(), "all");
     }
@@ -216,13 +224,19 @@ mod tests {
     #[test]
     fn parse_json_object_rejects_array() {
         let err = parse_json_object_option(r#"[1,2,3]"#, "data").unwrap_err();
-        assert!(err.to_string().contains("object"), "should mention object: {err}");
+        assert!(
+            err.to_string().contains("object"),
+            "should mention object: {err}"
+        );
     }
 
     #[test]
     fn parse_json_object_rejects_string() {
         let err = parse_json_object_option(r#""hello""#, "target").unwrap_err();
-        assert!(err.to_string().contains("object"), "should mention object: {err}");
+        assert!(
+            err.to_string().contains("object"),
+            "should mention object: {err}"
+        );
     }
 
     #[test]

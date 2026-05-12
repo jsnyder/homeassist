@@ -1,6 +1,6 @@
 use crate::client::HaClient;
 use crate::error::AppError;
-use crate::output::{format_output, OutputMode};
+use crate::output::{OutputMode, format_output};
 use serde_json::json;
 
 fn format_numeric_summary(values: &[f64]) -> String {
