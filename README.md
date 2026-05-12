@@ -96,7 +96,8 @@ homeassist auto-detects the best output mode:
 - **Claude Code** (`CLAUDECODE=1`) → Compact tab-separated for token savings
 - **Piped/scripted** → JSON
 
-Override with `--human`, `--compact`, or `--no-compact`.
+Override with `--human`, `--compact`, or `--no-compact`. Use `--limit N` to cap
+entity lists in any output mode.
 
 ## Deployment Validation
 
@@ -137,7 +138,7 @@ and automatic resource cleanup.
 - **HTTP client**: reqwest with rustls-tls
 - **WebSocket**: tokio-tungstenite
 - **CLI framework**: clap (derive)
-- **Tests**: 125 unit/integration tests using real WebSocket servers (no mocks)
+- **Tests**: 209 unit/integration tests using real WebSocket servers (no mocks)
 
 ## License
 
